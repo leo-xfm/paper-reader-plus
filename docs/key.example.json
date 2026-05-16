@@ -1,0 +1,26 @@
+{
+  "translation": [
+    {
+      "service": "Google Cloud Translation API",
+      "key": "YOUR_GOOGLE_CLOUD_TRANSLATION_API_KEY",
+      "created_at": "YYYY-MM-DD"
+    },
+    {
+      "service": "Baidu General Translation API",
+      "app_id": "YOUR_BAIDU_TRANSLATION_APP_ID",
+      "key": "YOUR_BAIDU_TRANSLATION_APP_KEY",
+      "created_at": "YYYY-MM-DD"
+    }
+  ],
+  "agent": [
+    {
+      "service": "volcengine",
+      "url": "https://ark.cn-beijing.volces.com/api/v3/",
+      "type": ["chat"],
+      "model": "YOUR_MODEL_NAME",
+      "key": "YOUR_AGENT_API_KEY",
+      "timeout": 6000,
+      "created_at": "YYYY-MM-DD"
+    }
+  ]
+}

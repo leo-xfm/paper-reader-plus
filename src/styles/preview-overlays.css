@@ -1,0 +1,66 @@
+.toolbar-swatches {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 1px;
+  height: var(--size-control-md);
+}
+
+.color-swatch {
+  width: 18px !important;
+  height: 18px !important;
+  min-height: 18px;
+  border-radius: 3px;
+  border-color: rgba(15, 23, 42, 0.24);
+}
+
+.color-swatch.active {
+  outline: 2px solid #1f6feb;
+  outline-offset: 1px;
+}
+
+.search-highlight {
+  z-index: 3;
+  background: rgba(251, 191, 36, 0.34);
+  pointer-events: none;
+}
+
+.search-highlight.active,
+.anchor-flash {
+  background: rgba(59, 130, 246, 0.35);
+  outline: 2px solid #2563eb;
+  pointer-events: none;
+}
+
+.anchor-flash {
+  animation: flash 1.3s ease-out;
+}
+
+.annotation-overlay {
+  appearance: none;
+  outline: none;
+  box-shadow: none;
+  pointer-events: auto;
+  transition: none;
+}
+
+.note-marker {
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  outline: 2px solid #fff;
+  transform: translate(-50%, -50%);
+}
+
+.page-number {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 5;
+  font-size: 11px;
+  color: #6b7280;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 4px;
+  padding: 1px 5px;
+}

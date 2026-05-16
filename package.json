@@ -1,0 +1,95 @@
+{
+  "name": "paper-reader-plus",
+  "version": "0.1.0",
+  "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "rebuild:native": "electron-builder install-app-deps",
+    "dev": "tsc -p tsconfig.electron.json && concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "vue-tsc --noEmit && vite build && tsc -p tsconfig.electron.json",
+    "test": "vitest run",
+    "start": "electron .",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "jszip": "^3.10.1",
+    "katex": "^0.16.46",
+    "lucide-vue-next": "^0.511.0",
+    "markdown-it": "^14.1.1",
+    "pdfjs-dist": "4.10.38",
+    "pinia": "^3.0.3",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-inputrules": "^1.5.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-markdown": "^1.13.4",
+    "prosemirror-model": "^1.25.6",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.0",
+    "prosemirror-view": "^1.41.8",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^24.0.1",
+    "concurrently": "^9.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "37.10.3",
+    "electron-builder": "25.1.8",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^4.1.6",
+    "vue-tsc": "^2.2.10",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.paperreader.plus",
+    "productName": "Paper Reader Plus",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "docs/*.j2",
+      "docs/*.md",
+      "docs/*.json",
+      "icon/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "docs",
+        "to": "docs",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "icon": "icon/256.png",
+    "win": {
+      "icon": "icon/256.png",
+      "target": "nsis"
+    },
+    "fileAssociations": [
+      {
+        "ext": "readerp",
+        "name": "ReaderP Package",
+        "description": "Paper Reader Plus ReaderP Package",
+        "role": "Editor"
+      },
+      {
+        "ext": "readerm",
+        "name": "ReaderM Package",
+        "description": "Paper Reader Plus ReaderM Package",
+        "role": "Editor"
+      }
+    ]
+  }
+}

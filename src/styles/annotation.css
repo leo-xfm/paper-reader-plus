@@ -1,0 +1,174 @@
+.selection-toolbar {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(215, 220, 227, 0.62);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  overflow: hidden;
+}
+
+.selection-toolbar button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.selection-toolbar button.active {
+  background: #edf4ff;
+  border-color: #88aee6;
+  color: #1f6feb;
+}
+
+.selection-toolbar-main {
+  width: 190px;
+  display: grid;
+  grid-template-rows: 30px 30px;
+  gap: 6px;
+}
+
+.selection-toolbar-bottom {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.selection-toolbar-group {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid rgba(215, 220, 227, 0.68);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04), 0 1px 4px rgba(15, 23, 42, 0.16);
+}
+
+.selection-toolbar-annotate-group {
+  gap: 0;
+  border-radius: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.selection-toolbar-group button {
+  flex: 1 1 0;
+  width: auto;
+  height: 26px;
+  min-height: 26px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.selection-toolbar-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 30px);
+  grid-auto-rows: 30px;
+  gap: 8px;
+}
+
+.selection-toolbar-actions button {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+
+.annotation-comment-popover {
+  position: fixed;
+  z-index: 65;
+  width: 380px;
+  border: 1px solid #d7dce3;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+  overflow: hidden;
+}
+
+.annotation-comment-tools {
+  min-height: 38px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.annotation-comment-type {
+  display: inline-flex;
+  border: 1px solid #d7dce3;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.annotation-comment-type button {
+  width: 30px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.annotation-comment-type button + button {
+  border-left: 1px solid #d7dce3;
+}
+
+.annotation-comment-type button.active {
+  background: #edf4ff;
+  color: #1f6feb;
+}
+
+.annotation-comment-colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.annotation-comment-colors button {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  border-radius: 3px;
+  border-color: rgba(15, 23, 42, 0.18);
+}
+
+.annotation-comment-colors button.active {
+  outline: 2px solid #1f6feb;
+  outline-offset: 1px;
+}
+
+.annotation-comment-popover textarea {
+  width: 100%;
+  min-height: 86px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.annotation-comment-popover input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-top: 1px solid #e5e7eb;
+  border-radius: 0;
+}
+
+.annotation-comment-popover textarea:focus,
+.annotation-comment-popover input:focus {
+  box-shadow: none;
+}

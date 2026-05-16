@@ -1,0 +1,276 @@
+.pdf-error {
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.pdf-page {
+  position: relative;
+  margin: 0 auto 18px;
+  overflow-anchor: none;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
+}
+
+.pdf-page canvas {
+  display: block;
+}
+
+.pdf-page.image-selecting {
+  cursor: crosshair;
+}
+
+.pdf-page.image-selecting canvas {
+  user-select: none;
+}
+
+.image-selection-box {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  border: 2px solid #2563eb;
+  background: rgba(37, 99, 235, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.72) inset;
+}
+
+.page-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  text-align: center;
+  color: #6b7280;
+  background: #fff;
+}
+
+.page-error {
+  padding: 18px;
+  color: #b42318;
+}
+
+.page-error small {
+  max-width: 70%;
+  color: #6b7280;
+  overflow-wrap: anywhere;
+}
+
+.text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.text-layer span {
+  position: absolute;
+  display: inline-block;
+  color: transparent;
+  line-height: 1;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+  overflow: visible;
+}
+
+.text-layer span.symbol-token {
+  cursor: help;
+}
+
+.text-layer span.symbol-token:hover {
+  background: rgba(34, 197, 94, 0.16);
+  outline: 1px solid rgba(22, 163, 74, 0.45);
+}
+
+.text-layer ::selection,
+.pdf-page ::selection {
+  background: rgba(187, 212, 246, 0.58);
+}
+
+.pdf-link-layer,
+.pdf-reference-layer,
+.pdf-author-layer,
+.pdf-dictionary-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.pdf-link-layer {
+  z-index: 7;
+}
+
+.pdf-reference-layer {
+  z-index: 3;
+}
+
+.pdf-link-hotspot,
+.pdf-reference-hotspot,
+.pdf-author-hotspot,
+.pdf-dictionary-hotspot {
+  position: absolute;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.pdf-link-hotspot {
+  appearance: none;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: transparent !important;
+  cursor: pointer;
+  outline: none;
+  box-shadow: none !important;
+  transition: border-color 120ms ease;
+}
+
+.pdf-link-hotspot:hover,
+.pdf-link-hotspot:focus,
+.pdf-link-hotspot:active {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: transparent !important;
+  box-shadow: none !important;
+}
+
+.pdf-link-hotspot:hover,
+.pdf-link-hotspot:focus-visible {
+  border-color: rgba(37, 99, 235, 0.65);
+  outline: none;
+}
+
+.pdf-link-hotspot:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.pdf-reference-hotspot {
+  cursor: zoom-in;
+  outline: none;
+}
+
+.pdf-author-layer {
+  z-index: 5;
+}
+
+.pdf-author-hotspot {
+  pointer-events: auto;
+  cursor: help;
+  box-shadow: inset 0 -2px 0 rgba(14, 165, 233, 0.55);
+}
+
+.pdf-author-hotspot:hover {
+  background: rgba(14, 165, 233, 0.13);
+  outline: 1px solid rgba(14, 165, 233, 0.55);
+}
+
+.pdf-dictionary-layer {
+  z-index: 5;
+}
+
+.pdf-dictionary-hotspot {
+  pointer-events: auto;
+  cursor: help;
+  border-bottom: 2px dashed rgba(124, 58, 237, 0.8);
+}
+
+.pdf-dictionary-hotspot:hover {
+  background: rgba(124, 58, 237, 0.12);
+  outline: 1px dashed rgba(124, 58, 237, 0.65);
+}
+
+.pdf-paragraph-action-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.pdf-paragraph-action {
+  position: absolute;
+  width: 18px;
+  pointer-events: auto;
+}
+
+.pdf-paragraph-rail {
+  position: absolute;
+  inset: 0 auto 0 6px;
+  width: 4px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.pdf-paragraph-action:hover .pdf-paragraph-rail,
+.pdf-paragraph-action.active .pdf-paragraph-rail {
+  opacity: 1;
+  background: #c7cdd6;
+}
+
+.pdf-paragraph-action.active .pdf-paragraph-rail {
+  background: #6b7280;
+}
+
+.pdf-paragraph-menu {
+  position: fixed;
+  z-index: var(--z-popover);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid #d7dce3;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+  pointer-events: auto;
+}
+
+.pdf-paragraph-menu button {
+  min-height: 28px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pdf-paragraph-menu button:hover {
+  border-color: #d7dce3;
+  background: #f3f6fb;
+}
+
+.search-highlight,
+.anchor-flash,
+.annotation-overlay,
+.note-marker {
+  position: absolute;
+  z-index: 4;
+  border: 0;
+  border-radius: 2px;
+  padding: 0;
+  min-height: 0;
+  pointer-events: auto;
+}

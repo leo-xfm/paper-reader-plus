@@ -1,0 +1,85 @@
+.start-screen {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  align-content: center;
+  gap: 14px;
+  padding-bottom: 9vh;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.start-screen::before {
+  content: "";
+  position: absolute;
+  inset: 28px;
+  border: 1px dashed transparent;
+  border-radius: var(--radius-card);
+  pointer-events: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.start-screen.drag-over::before {
+  border-color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.start-screen h1 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-display);
+  line-height: 1.08;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.start-screen p {
+  max-width: 620px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.start-drop-hint {
+  color: var(--color-text-soft);
+  font-size: 13px !important;
+}
+
+.start-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  margin-top: 12px;
+}
+
+.start-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  padding: 0 14px;
+  font-weight: 650;
+}
+
+.primary:not(:disabled):hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.secondary {
+  padding: 0 12px;
+  background: var(--color-paper);
+}
+
+.error {
+  color: var(--color-danger);
+}

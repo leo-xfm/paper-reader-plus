@@ -1,0 +1,152 @@
+@keyframes flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #111827;
+    color: #e5e7eb;
+  }
+
+  button,
+  textarea,
+  input,
+  .library,
+  .app-menu,
+  .file-tabs,
+  .file-tab.active,
+  .pdf-toolbar,
+  .right-panel,
+  .right-panel-rail,
+  .popover,
+  .reference-preview,
+  .author-preview,
+  .dictionary-preview,
+  .table-modal,
+  .modal {
+    background: #1f2937;
+    color: #e5e7eb;
+    border-color: #374151;
+  }
+
+  .app-shell {
+    background: #111827;
+  }
+
+  .file-tabs {
+    background: #111827;
+  }
+
+  .file-tab {
+    color: #9ca3af;
+  }
+
+  .file-tab:hover {
+    background: #172033;
+  }
+
+  .file-tab.active {
+    border-color: #374151;
+    border-bottom-color: #1f2937;
+    color: #e5e7eb;
+  }
+
+  .pdf-scroll {
+    background: #0f172a;
+  }
+
+  .markdown-preview,
+  .start-screen h1 {
+    color: #e5e7eb;
+  }
+
+  .markdown-preview code {
+    background: #374151;
+  }
+
+  .annotation-card {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  .annotation-card.active {
+    background: #172033;
+    border-color: #4b6386;
+  }
+
+  .annotation-quote {
+    background: #111827;
+    color: #d1d5db;
+  }
+
+  .annotation-comment-preview,
+  .annotation-card-header,
+  .annotation-edit-color,
+  .annotation-count,
+  .empty-state {
+    color: #9ca3af;
+  }
+
+  .annotation-tags span {
+    background: #111827;
+    border-color: #374151;
+    color: #d1d5db;
+  }
+
+  .annotation-card-editor {
+    border-top-color: #374151;
+  }
+
+  .annotation-delete {
+    background: #2a1820;
+    border-color: #7f1d1d;
+    color: #fecaca;
+  }
+
+  .panel-tab-rail {
+    background: #111827;
+    border-color: #374151;
+  }
+
+  .panel-tab-button {
+    color: #9ca3af;
+  }
+
+  .panel-tab-button:hover {
+    background: #1f2937;
+    border-color: #374151;
+    color: #e5e7eb;
+  }
+
+  .panel-tab-button.active {
+    background: #172033;
+    border-color: #4b6386;
+    color: #88aee6;
+  }
+
+  .right-panel-rail {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  .right-panel-rail-header {
+    border-color: #374151;
+  }
+
+  .right-panel-rail-tabs button.active {
+    background: #374151;
+    border-color: #4b5563;
+  }
+
+  .right-panel-rail-tabs button:hover,
+  .right-panel-toggle:hover {
+    background: #172033;
+    border-color: #4b6386;
+    color: #88aee6;
+  }
+}

@@ -1,0 +1,47 @@
+.reader-grid {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  overflow: hidden;
+  transition: grid-template-columns var(--rail-transition-duration) var(--rail-transition-easing);
+}
+
+.pdf-scroll {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overflow-anchor: none;
+  background: var(--color-reading-bg);
+  padding: 24px 28px 48px;
+}
+
+.loading {
+  color: var(--color-text-muted);
+}
+
+.resize-handle {
+  width: 3px;
+  min-width: 3px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  cursor: col-resize;
+  color: transparent;
+  position: relative;
+  touch-action: none;
+}
+
+.resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+}
+
+.resize-handle:hover {
+  background: #fff;
+}

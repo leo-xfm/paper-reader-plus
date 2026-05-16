@@ -1,0 +1,8 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 100vh;
+  min-width: var(--app-min-width);
+  min-height: var(--app-min-height);
+  background: var(--color-canvas);
+}

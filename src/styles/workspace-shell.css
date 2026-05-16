@@ -1,0 +1,131 @@
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.file-tabs {
+  min-height: 40px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-paper);
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  z-index: 41;
+}
+
+.file-tab-list {
+  min-width: 0;
+  display: flex;
+  align-items: end;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: 5px 10px 0;
+}
+
+.file-tab {
+  width: 244px;
+  min-width: 168px;
+  max-width: 280px;
+  height: 35px;
+  padding: 0 5px 0 0;
+  border-color: transparent;
+  border-bottom-color: var(--color-border);
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: var(--color-paper);
+  color: var(--color-text-muted);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  gap: 2px;
+  border-style: solid;
+  border-width: 1px;
+  justify-content: stretch;
+  flex: 0 0 auto;
+}
+
+.file-tab:hover {
+  background: var(--color-surface);
+}
+
+.file-tab.active {
+  background: var(--color-paper);
+  border-color: var(--color-border);
+  border-bottom-color: var(--color-paper);
+  color: var(--color-text);
+}
+
+.file-tab-open {
+  min-width: 0;
+  height: 33px;
+  min-height: 33px;
+  padding: 0 4px 0 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  justify-content: stretch;
+}
+
+.file-tab-open:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.file-tab-open span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.file-tab-close {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  align-self: center;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-soft);
+}
+
+.file-tab-close:hover {
+  border-color: var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
+.app-menu {
+  min-height: 42px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-paper);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  z-index: 40;
+}
+
+.menu-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.menu-group span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+}
+
+.menu-group button {
+  min-height: calc(var(--size-control-md) - 2px);
+  padding: 0 8px;
+}

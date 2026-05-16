@@ -1,0 +1,161 @@
+.annotation-list {
+  padding: 14px;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.annotation-filters {
+  display: grid;
+  grid-template-columns: minmax(88px, 1.05fr) 56px minmax(96px, 1.1fr) minmax(104px, 1.15fr) var(--size-control-lg);
+  gap: 5px;
+  align-items: center;
+  --annotation-filter-height: var(--size-control-lg);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.annotation-filters .color-dropdown-trigger {
+  width: 100% !important;
+  border-color: var(--color-border);
+}
+
+.annotation-clear-filter {
+  margin: 0;
+  width: var(--annotation-filter-height);
+  height: var(--annotation-filter-height);
+  min-height: var(--annotation-filter-height);
+  padding: 0;
+  align-self: center;
+}
+
+.annotation-count,
+.empty-state {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  flex: 0 0 auto;
+}
+
+.empty-summary {
+  display: grid;
+  gap: 12px;
+  place-items: center;
+  min-height: 220px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.annotation-card {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 12px 12px 12px 14px;
+  cursor: pointer;
+  background: var(--color-paper);
+  display: grid;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+  --annotation-accent: #bbd4f6;
+}
+
+.annotation-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: transparent;
+}
+
+.annotation-card.active {
+  border-color: #b9c9e8;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.14);
+  background: #fbfdff;
+}
+
+.annotation-card.active::before {
+  background: var(--annotation-accent);
+}
+
+.annotation-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+}
+
+.annotation-card strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.annotation-color {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  display: inline-block;
+}
+
+.annotation-quote {
+  margin: 0;
+  padding: 9px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--annotation-accent), #ffffff 35%);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: #354154;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.annotation-comment-preview {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+  max-height: 2.9em;
+  overflow: hidden;
+}
+
+.annotation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.annotation-tags span {
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.annotation-card-editor {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.annotation-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.annotation-edit-color {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+}
