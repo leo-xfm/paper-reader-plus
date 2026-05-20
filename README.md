@@ -1,5 +1,7 @@
 # Paper Reader Plus
 
+[简体中文](README-cn.md) | English
+
 Paper Reader Plus is a desktop workspace for reading, annotating, translating, and writing around academic papers. It combines a PDF reader, Markdown editor, evidence-linked notes, AI assistance, translation tools, and portable ReaderP/ReaderM packages in one local Electron app.
 
 
