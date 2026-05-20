@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { BrowserWindow } from "electron";
 import { app, dialog } from "electron";
 import { createReaderPackageBuffer, extractAssetPathsFromMarkdown, type ReaderPackageAssetInput } from "../ReaderPackageService.js";
@@ -18,6 +19,7 @@ export type DbDocument = {
   source_type?: "pdf" | "markdown" | "readerp" | "readerm";
   readerp_path?: string;
   package_path?: string;
+  source_path?: string;
   latex_path?: string;
   latex_file_name?: string;
   created_at: string;
@@ -101,6 +103,9 @@ let assetsDir = "";
 let storePath = "";
 let store: StoredData;
 const aiStreamControllers = new Map<string, AbortController>();
+let storeWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let storeWritePromise = Promise.resolve();
+const STORE_WRITE_DEBOUNCE_MS = 80;
 
 function defaultSettings(): Settings {
   const docsConfig = readDocsKeyConfig();
@@ -119,13 +124,36 @@ function defaultSettings(): Settings {
     research_area: "",
     reader_prompt: readTemplate("system"),
     summary_template: readTemplate("literature-read"),
+    copy_quote_template: "> {{ paragraph_content }}\n\nSource: {{ page_marker }}",
+    quote_to_note_template: "{{ page_marker }}",
+    quote_to_readerm_template: "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
     summary_source: "pdf-extractor",
+    summary_text_char_limit: 120000,
     summary_figure_attachment_limit: 10,
+    capture_image_scale: 2,
+    markdown_default_font_size: 15,
+    markdown_line_height: 1.6,
+    markdown_code_font_scale: 0.86,
+    markdown_code_line_height: 1.22,
+    markdown_font_family: "current",
+    markdown_code_font_family: "Consolas",
+    markdown_code_line_numbers: true,
+    markdown_code_ligatures: true,
+    markdown_highlight_enabled: true,
+    markdown_highlight_color: "#fff3bf",
+    markdown_math_enabled: true,
+    markdown_html_live_enabled: true,
+    markdown_default_editor_mode: "live",
+    readerm_edit_split_default: false,
+    readerm_preview_position: "right",
+    history_readerp_link_view: "pdf",
     ai_send_notes_context: true,
     ai_send_summary_context: true,
     ai_send_annotations_context: true,
     ai_send_loaded_pdf_text: true,
     ai_send_figure_attachments: true,
+    simpletex_ocr_token: "",
+    simpletex_ocr_enabled: false,
     translator_mode: "ai",
     translation_provider: "google",
     translator_api_url: "",
@@ -171,7 +199,38 @@ export function now() {
 }
 
 export function saveStore() {
-  writeFileSync(storePath, JSON.stringify(store, null, 2), "utf8");
+  if (!storePath) return;
+  if (storeWriteTimer !== null) clearTimeout(storeWriteTimer);
+  storeWriteTimer = setTimeout(() => {
+    storeWriteTimer = null;
+    const snapshot = JSON.stringify(store, null, 2);
+    storeWritePromise = storeWritePromise
+      .then(() => writeStoreSnapshot(snapshot))
+      .catch((cause) => {
+        console.error("Failed to save Paper Reader Plus store:", cause);
+      });
+  }, STORE_WRITE_DEBOUNCE_MS);
+}
+
+async function writeStoreSnapshot(snapshot: string) {
+  const tempPath = `${storePath}.${process.pid}.tmp`;
+  await writeFile(tempPath, snapshot, "utf8");
+  await rename(tempPath, storePath);
+}
+
+export async function flushStore() {
+  if (!storePath) return;
+  if (storeWriteTimer !== null) {
+    clearTimeout(storeWriteTimer);
+    storeWriteTimer = null;
+  }
+  const snapshot = JSON.stringify(store, null, 2);
+  storeWritePromise = storeWritePromise
+    .then(() => writeStoreSnapshot(snapshot))
+    .catch((cause) => {
+      console.error("Failed to save Paper Reader Plus store:", cause);
+    });
+  await storeWritePromise;
 }
 
 export function initStorage() {
@@ -221,12 +280,12 @@ export function documentAssetDir(documentId: string) {
   return join(assetsDir, documentId);
 }
 
-export function createAssetRecord(documentId: string, fileName: string, mimeType: string, data: Buffer, originalName?: string) {
+export async function createAssetRecordAsync(documentId: string, fileName: string, mimeType: string, data: Buffer, originalName?: string) {
   getDocument(documentId);
   const targetDir = documentAssetDir(documentId);
-  mkdirSync(targetDir, { recursive: true });
+  await mkdir(targetDir, { recursive: true });
   const target = join(targetDir, fileName);
-  writeFileSync(target, data);
+  await writeFile(target, data);
   const timestamp = now();
   const asset: StoredAsset = {
     asset_id: randomUUID(),
@@ -242,24 +301,24 @@ export function createAssetRecord(documentId: string, fileName: string, mimeType
   return asset;
 }
 
-export function dataUrlForAsset(asset: StoredAsset) {
+export async function dataUrlForAssetAsync(asset: StoredAsset) {
   if (!existsSync(asset.path)) throw new Error("Image asset is missing.");
-  return `data:${asset.mime_type};base64,${readFileSync(asset.path).toString("base64")}`;
+  return `data:${asset.mime_type};base64,${(await readFile(asset.path)).toString("base64")}`;
 }
 
-export function packageAssetsForDocument(documentId: string, ...sources: string[]): ReaderPackageAssetInput[] {
+export async function packageAssetsForDocumentAsync(documentId: string, ...sources: string[]): Promise<ReaderPackageAssetInput[]> {
   const referenced = extractAssetPathsFromMarkdown(...sources);
-  return listAssets(documentId)
-    .filter((asset) => referenced.has(`assets/${asset.file_name}`) && existsSync(asset.path))
-    .map((asset) => ({
-      asset_id: asset.asset_id,
-      document_id: asset.document_id,
-      file_name: asset.file_name,
-      mime_type: asset.mime_type,
-      data: readFileSync(asset.path),
-      original_name: asset.original_name,
-      created_at: asset.created_at,
-    }));
+  const assets = listAssets(documentId)
+    .filter((asset) => referenced.has(`assets/${asset.file_name}`) && existsSync(asset.path));
+  return Promise.all(assets.map(async (asset) => ({
+    asset_id: asset.asset_id,
+    document_id: asset.document_id,
+    file_name: asset.file_name,
+    mime_type: asset.mime_type,
+    data: await readFile(asset.path),
+    original_name: asset.original_name,
+    created_at: asset.created_at,
+  })));
 }
 
 export function extractReaderDocumentIdsFromMarkdown(...sources: string[]) {
@@ -294,6 +353,12 @@ export function clampSummaryFigureAttachmentLimit(value: unknown) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 10;
   return Math.min(20, Math.max(0, Math.trunc(number)));
+}
+
+export function clampSummaryTextCharLimit(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 120000;
+  return Math.min(2000000, Math.max(0, Math.trunc(number)));
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -352,8 +417,9 @@ export async function saveReaderPackageForDocument(options: ReaderPackageSaveOpt
     latexDataByDocumentId: options.latexDataByDocumentId,
     assets: options.assets,
   });
-  writeFileSync(result.filePath, buffer);
+  await writeFile(result.filePath, buffer);
   options.document.readerp_path = result.filePath;
+  options.document.file_name = basename(result.filePath);
   return result.filePath;
 }
 
@@ -380,13 +446,14 @@ export function createIpcContext(window: BrowserWindow) {
     listSymbols: (documentId: string) => store.symbols[documentId] || [],
     listParagraphTranslations: (documentId: string) => store.paragraph_translations[documentId] || [],
     documentAssetDir,
-    createAssetRecord,
-    dataUrlForAsset,
-    packageAssetsForDocument,
+    createAssetRecordAsync,
+    dataUrlForAssetAsync,
+    packageAssetsForDocumentAsync,
     extractReaderDocumentIdsFromMarkdown,
     buildReadermReferenceContext,
     getSettings,
     clampSummaryFigureAttachmentLimit,
+    clampSummaryTextCharLimit,
     isRecord,
     cleanTextQuote,
     cleanRectList,
@@ -394,6 +461,7 @@ export function createIpcContext(window: BrowserWindow) {
     latexTargetPath,
     normalizeDictionaryTerm,
     saveReaderPackageForDocument,
+    flushStore,
   };
 }
 

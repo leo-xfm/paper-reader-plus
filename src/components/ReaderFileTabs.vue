@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { FileText, X } from "lucide-vue-next";
+import { FileArchive, FileText, NotebookText, X } from "lucide-vue-next";
+import { useI18n } from "@/i18n";
 import type { LibraryDocument } from "@/types";
 
 const props = defineProps<{
@@ -14,14 +15,22 @@ const emit = defineEmits<{
   (event: "closeTab", documentId: string): void;
 }>();
 
+const { t } = useI18n();
+
 const documentsById = computed(() => new Map(props.documents.map((document) => [document.document_id, document])));
 const openDocuments = computed(() => props.openDocumentIds
   .map((documentId) => documentsById.value.get(documentId))
   .filter((document): document is LibraryDocument => Boolean(document)));
+
+function tabIconForDocument(document: LibraryDocument) {
+  if (document.source_type === "readerm") return NotebookText;
+  if (document.readerp_path || document.source_type === "readerp") return FileArchive;
+  return FileText;
+}
 </script>
 
 <template>
-  <nav v-if="openDocuments.length" class="file-tabs" aria-label="Open files">
+  <nav v-if="openDocuments.length" class="file-tabs" :aria-label="t('library.openFiles')">
     <div class="file-tab-list">
       <div
         v-for="document in openDocuments"
@@ -31,14 +40,14 @@ const openDocuments = computed(() => props.openDocumentIds
         :title="document.file_name"
       >
         <button type="button" class="file-tab-open" @click="emit('openDocument', document.document_id)">
-          <FileText :size="16" />
+          <component :is="tabIconForDocument(document)" :size="16" />
           <span>{{ document.title || document.file_name }}</span>
         </button>
         <button
           type="button"
           class="file-tab-close"
-          title="Close file"
-          aria-label="Close file"
+          :title="t('library.closeFile')"
+          :aria-label="t('library.closeFile')"
           @click.stop="emit('closeTab', document.document_id)"
         >
           <X :size="14" />

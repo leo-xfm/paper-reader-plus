@@ -207,30 +207,41 @@ body.resizing {
 
 .pdf-paragraph-action {
   position: absolute;
-  width: 18px;
+  width: 42px;
   pointer-events: auto;
 }
 
 .pdf-paragraph-rail {
   position: absolute;
-  inset: 0 auto 0 6px;
-  width: 4px;
+  inset: 0;
+  width: 100%;
   min-height: 0;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 6px;
   background: transparent;
   opacity: 0;
   cursor: pointer;
 }
 
+.pdf-paragraph-rail::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 19px;
+  width: 4px;
+  border-radius: 999px;
+  background: #c7cdd6;
+  content: "";
+}
+
 .pdf-paragraph-action:hover .pdf-paragraph-rail,
 .pdf-paragraph-action.active .pdf-paragraph-rail {
   opacity: 1;
-  background: #c7cdd6;
+  background: transparent;
 }
 
-.pdf-paragraph-action.active .pdf-paragraph-rail {
+.pdf-paragraph-action.active .pdf-paragraph-rail::before {
   background: #6b7280;
 }
 

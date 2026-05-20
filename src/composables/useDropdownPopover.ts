@@ -9,9 +9,9 @@ export function useDropdownPopover(menuSelector: string, options: { matchTrigger
 
   function closeMenu() {
     open.value = false;
-    document.removeEventListener("pointerdown", handleDocumentPointerDown);
+    document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
     window.removeEventListener("resize", closeMenu);
-    window.removeEventListener("scroll", closeMenu, true);
+    window.removeEventListener("scroll", handleWindowScroll, true);
     window.removeEventListener("keydown", handleWindowKeydown);
   }
 
@@ -31,6 +31,13 @@ export function useDropdownPopover(menuSelector: string, options: { matchTrigger
     if (!rootRef.value?.contains(target) && !(target instanceof Element && target.closest(menuSelector))) closeMenu();
   }
 
+  function handleWindowScroll(event: Event) {
+    const target = event.target as Node | null;
+    if (target instanceof Element && target.closest(menuSelector)) return;
+    if (target && rootRef.value?.contains(target)) return;
+    closeMenu();
+  }
+
   function handleWindowKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") closeMenu();
   }
@@ -40,9 +47,9 @@ export function useDropdownPopover(menuSelector: string, options: { matchTrigger
     open.value = true;
     await nextTick();
     updateMenuPosition();
-    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    document.addEventListener("pointerdown", handleDocumentPointerDown, true);
     window.addEventListener("resize", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("scroll", handleWindowScroll, true);
     window.addEventListener("keydown", handleWindowKeydown);
   }
 

@@ -1,0 +1,131 @@
+.markdown-workspace {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-paper);
+}
+
+.markdown-workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel);
+}
+
+.markdown-workspace-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.markdown-workspace-title .title-edit {
+  min-width: 0;
+  max-width: 460px;
+}
+
+.markdown-workspace-title .title-button {
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  padding: 0;
+  text-align: left;
+  font-size: var(--font-size-panel-title);
+  font-weight: 700;
+}
+
+.markdown-workspace-title .title-edit input {
+  height: var(--size-control-md);
+  font-size: var(--font-size-panel-title);
+  font-weight: 700;
+}
+
+.markdown-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.markdown-workspace-actions > button:not(.primary) {
+  width: var(--size-control-md);
+  height: var(--size-control-md);
+}
+
+.markdown-workspace-actions > button.primary {
+  min-width: 0;
+  height: var(--size-control-md);
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.markdown-edit-source-toolbar {
+  flex: 0 0 auto;
+}
+
+.markdown-edit-source-toolbar .live-markdown-toolbar-row {
+  padding-inline: 14px;
+}
+
+.markdown-workspace-textarea {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  padding: 20px 28px;
+  line-height: var(--markdown-line-height, 1.6);
+  font-family: var(--markdown-code-font-family, Consolas, "SFMono-Regular", "Liberation Mono", Menlo, monospace);
+  font-size: calc(var(--markdown-editor-font-size, var(--font-size-body)) * 0.94);
+}
+
+.markdown-workspace-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 28px;
+  font-size: var(--markdown-editor-font-size, 15px);
+}
+
+.markdown-search-popover {
+  position: absolute;
+  top: 70px;
+  right: 18px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-popover);
+}
+
+.markdown-search-popover input {
+  width: 240px;
+  height: var(--size-control-md);
+  padding: 0 9px;
+}
+
+.markdown-search-popover span {
+  min-width: 42px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+  text-align: center;
+}
+
+.markdown-search-match {
+  border-radius: 3px;
+  background: #fef08a;
+  color: inherit;
+}
+
+.markdown-search-match.active {
+  background: #fbbf24;
+}

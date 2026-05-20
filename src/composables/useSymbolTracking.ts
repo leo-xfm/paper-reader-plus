@@ -28,8 +28,8 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
   let symbolSaveTimer: number | null = null;
   let lastSymbolPersistKey = "";
 
-  function symbolPersistPayload(nextSymbols: SymbolDefinition[]) {
-    const tombstones = options.savedSymbols.value.filter((symbol) => symbol.deleted);
+  function symbolPersistPayload(nextSymbols: SymbolDefinition[], savedSymbols = options.savedSymbols.value) {
+    const tombstones = savedSymbols.filter((symbol) => symbol.deleted);
     const byKey = new Map<string, SymbolDefinition>();
     for (const symbol of [...nextSymbols, ...tombstones]) {
       byKey.set(symbol.normalized_symbol, symbol);
@@ -40,18 +40,21 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
     }));
   }
 
-  async function persistSymbols(nextSymbols: SymbolDefinition[]) {
-    if (!options.context.value) return;
-    const payload = symbolPersistPayload(nextSymbols);
-    const key = JSON.stringify(payload);
+  async function persistSymbols(documentId: string, nextSymbols: SymbolDefinition[], savedSymbols = options.savedSymbols.value) {
+    if (!documentId) return;
+    const payload = symbolPersistPayload(nextSymbols, savedSymbols);
+    const key = `${documentId}:${JSON.stringify(payload)}`;
     if (key === lastSymbolPersistKey) return;
     lastSymbolPersistKey = key;
     try {
-      options.savedSymbols.value = await window.paperReaderPlus.saveSymbols(
-        options.context.value.document.document_id,
+      const savedSymbols = await window.paperReaderPlus.saveSymbols(
+        documentId,
         toIpcPlainObject(payload),
       );
-      if (options.context.value) options.context.value.symbols = options.savedSymbols.value;
+      if (options.context.value?.document.document_id === documentId) {
+        options.savedSymbols.value = savedSymbols;
+        options.context.value.symbols = savedSymbols;
+      }
     } catch (cause) {
       options.showNotice(cause instanceof Error ? cause.message : String(cause));
     }
@@ -59,9 +62,13 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
 
   watch(symbols, () => {
     if (!options.context.value || options.loading.value) return;
+    const documentId = options.context.value.document.document_id;
+    const nextSymbols = symbols.value;
+    const savedSymbols = options.savedSymbols.value;
     if (symbolSaveTimer !== null) window.clearTimeout(symbolSaveTimer);
     symbolSaveTimer = window.setTimeout(() => {
-      void persistSymbols(symbols.value);
+      symbolSaveTimer = null;
+      void persistSymbols(documentId, nextSymbols, savedSymbols);
     }, 700);
   }, { deep: true });
 
@@ -84,7 +91,7 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
       next.push({ ...symbol, deleted: true, updated_at: timestamp });
     }
     options.savedSymbols.value = symbolPersistPayload(next);
-    void persistSymbols(options.savedSymbols.value);
+    void persistSymbols(options.context.value?.document.document_id || "", options.savedSymbols.value);
     return normalized;
   }
 
@@ -93,11 +100,12 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
     const next = symbols.value.filter((item) => item.normalized_symbol !== symbol.normalized_symbol);
     next.push({ ...symbol, deleted: true, updated_at: timestamp });
     options.savedSymbols.value = symbolPersistPayload(next);
-    void persistSymbols(options.savedSymbols.value);
+    void persistSymbols(options.context.value?.document.document_id || "", options.savedSymbols.value);
   }
 
   async function refreshSymbols() {
     if (!options.context.value || symbolRefreshProgress.value) return;
+    const documentId = options.context.value.document.document_id;
     try {
       const source = await window.paperReaderPlus.confirmSymbolRefreshSource();
       if (!source) return;
@@ -116,7 +124,7 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
           return;
         }
         symbolRefreshProgress.value = { status: options.t("symbol.progress.loadingLatex"), percent: 4 };
-        const latex = await window.paperReaderPlus.getLatexSource(options.context.value.document.document_id);
+        const latex = await window.paperReaderPlus.getLatexSource(documentId);
         generated = await extractSymbolsFromLatexWithProgress(latex.content, (progress) => {
           symbolRefreshProgress.value = {
             ...progress,
@@ -147,10 +155,11 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
         }
       }
 
+      if (options.context.value?.document.document_id !== documentId) return;
       symbolRefreshProgress.value = { status: options.t("symbol.progress.saving"), percent: 96 };
       generated = mergeSymbolDefinitions(generated);
       options.savedSymbols.value = applySymbolRefresh(options.savedSymbols.value, generated, mode);
-      await persistSymbols(options.savedSymbols.value);
+      await persistSymbols(documentId, options.savedSymbols.value);
       options.showNotice(options.t("symbol.refreshed", { count: generated.length }));
     } catch (cause) {
       options.showNotice(cause instanceof Error ? cause.message : String(cause));

@@ -28,7 +28,7 @@
 
 .start-screen h1 {
   margin: 0;
-  color: var(--color-text);
+  color: var(--color-primary);
   font-size: var(--font-size-display);
   line-height: 1.08;
   font-weight: 760;

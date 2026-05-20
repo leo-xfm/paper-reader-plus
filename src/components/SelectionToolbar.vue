@@ -21,6 +21,7 @@ const props = withDefaults(defineProps<{
   canTranslate?: boolean;
   canAskAi?: boolean;
   canMetaphor?: boolean;
+  quoteToNoteTitle?: string;
 }>(), {
   canTranslate: true,
   canAskAi: true,
@@ -84,7 +85,7 @@ const toolbarStyle = computed(() => {
     <div class="selection-toolbar-actions">
       <button type="button" :title="t('selection.copyText')" @click="emit('copy')"><Copy :size="16" /></button>
       <button type="button" :title="t('selection.copyQuote')" @click="emit('quote')"><Quote :size="16" /></button>
-      <button type="button" :title="t('selection.quoteToNote')" @click="emit('quoteToNote')"><MessageSquarePlus :size="16" /></button>
+      <button type="button" :title="quoteToNoteTitle || t('selection.quoteToNote')" @click="emit('quoteToNote')"><MessageSquarePlus :size="16" /></button>
       <button type="button" :title="t('pdf.translateSelection')" :disabled="canTranslate === false" @click="emit('translate')"><Languages :size="16" /></button>
       <button type="button" :title="t('selection.metaphor')" :disabled="canMetaphor === false" @click="emit('metaphor')"><Sparkles :size="16" /></button>
       <button type="button" :title="t('selection.askAi')" :disabled="canAskAi === false" @click="emit('askAi')"><Bot :size="16" /></button>

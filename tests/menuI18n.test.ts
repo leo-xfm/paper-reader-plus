@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { menuLabel, menuLabelKeys, resolveMenuLanguage } from "../electron/i18n";
+import { dialogLabel, menuLabel, menuLabelKeys, resolveMenuLanguage } from "../electron/i18n";
 
 describe("Electron menu i18n", () => {
   it("resolves menu language from settings and system locale", () => {
@@ -14,5 +14,10 @@ describe("Electron menu i18n", () => {
       expect(menuLabel("zh-CN", key)).toBeTruthy();
     }
   });
-});
 
+  it("localizes Electron dialog labels", () => {
+    expect(dialogLabel("zh-CN", "dialog.saveClose.message")).toBe("关闭前保存？");
+    expect(dialogLabel("zh-CN", "dialog.delete.detail", { title: "Paper" })).toContain("Paper");
+    expect(dialogLabel("zh-CN", "button.cancel")).not.toBe(dialogLabel("en-US", "button.cancel"));
+  });
+});

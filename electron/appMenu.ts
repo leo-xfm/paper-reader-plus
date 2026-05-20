@@ -28,7 +28,10 @@ export type MenuAction =
   | "translate-selection"
   | "toggle-search"
   | "toggle-outline"
+  | "settings-general"
+  | "settings-markdown"
   | "settings-agent-api"
+  | "settings-ocr-api"
   | "settings-translation-api"
   | "settings-network-proxy"
   | "settings-file-associations"
@@ -38,7 +41,7 @@ export type MenuAction =
 export function createApplicationMenu(
   sendMenuAction: (action: MenuAction) => void,
   language: Settings["ui_language"] = "system",
-  openHelp: () => void = () => {},
+  openHelp: (topic?: string) => void = () => {},
 ) {
   const label = (key: Parameters<typeof menuLabel>[1]) => menuLabel(language, key);
   const template: MenuItemConstructorOptions[] = [
@@ -57,17 +60,17 @@ export function createApplicationMenu(
         { label: label("exportReaderp"), accelerator: "CmdOrCtrl+E", click: () => sendMenuAction("export-readerp") },
         { label: label("exportReaderm"), click: () => sendMenuAction("export-readerm") },
         { type: "separator" },
-        { role: "quit" },
+        { label: label("quit"), role: "quit" },
       ],
     },
     {
       label: label("edit"),
       submenu: [
-        { role: "undo" },
-        { role: "redo" },
+        { label: label("undo"), role: "undo" },
+        { label: label("redo"), role: "redo" },
         { type: "separator" },
-        { role: "copy" },
-        { role: "paste" },
+        { label: label("copy"), role: "copy" },
+        { label: label("paste"), role: "paste" },
         { type: "separator" },
         { label: label("searchLoadedPages"), accelerator: "CmdOrCtrl+F", click: () => sendMenuAction("toggle-search") },
         { type: "separator" },
@@ -80,7 +83,7 @@ export function createApplicationMenu(
       submenu: [
         { label: label("toggleReaderPanel"), accelerator: "CmdOrCtrl+B", click: () => sendMenuAction("toggle-panel") },
         { type: "separator" },
-        { role: "togglefullscreen", accelerator: "F11" },
+        { label: label("toggleFullscreen"), role: "togglefullscreen", accelerator: "F11" },
       ],
     },
     {
@@ -99,21 +102,23 @@ export function createApplicationMenu(
     {
       label: label("settings"),
       submenu: [
-        { label: label("agentApi"), accelerator: "CmdOrCtrl+,", click: () => sendMenuAction("settings-agent-api") },
+        { label: label("general"), accelerator: "CmdOrCtrl+,", click: () => sendMenuAction("settings-general") },
+        { label: label("markdown"), click: () => sendMenuAction("settings-markdown") },
+        { label: label("fileAssociations"), click: () => sendMenuAction("settings-file-associations") },
+        { type: "separator" },
+        { label: label("agentApi"), click: () => sendMenuAction("settings-agent-api") },
+        { label: label("ocrApi"), click: () => sendMenuAction("settings-ocr-api") },
         { label: label("translationApi"), click: () => sendMenuAction("settings-translation-api") },
         { type: "separator" },
         { label: label("defaultSystemPrompt"), click: () => sendMenuAction("settings-system-prompt") },
         { label: label("defaultSummaryPrompt"), click: () => sendMenuAction("settings-summary-prompt") },
-        { type: "separator" },
-        { label: label("networkProxy"), click: () => sendMenuAction("settings-network-proxy") },
-        { type: "separator" },
-        { label: label("fileAssociations"), click: () => sendMenuAction("settings-file-associations") },
       ],
     },
     {
       label: label("help"),
       submenu: [
-        { label: label("openHelp"), accelerator: "F1", click: () => openHelp() },
+        { label: label("openHelp"), accelerator: "F1", click: () => openHelp("guide") },
+        { label: label("openApiGuide"), click: () => openHelp("api") },
       ],
     },
   ];

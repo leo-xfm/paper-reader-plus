@@ -24,6 +24,7 @@ const props = withDefaults(defineProps<{
   imageSelectMode?: boolean;
   authorProfiles?: AuthorProfile[];
   dictionaryEntries?: DictionaryEntry[];
+  captureImageScale?: number;
   canTranslate?: boolean;
   canAskAi?: boolean;
 }>(), {
@@ -177,11 +178,16 @@ function finishImageSelection(event: PointerEvent) {
     height: height / Math.max(1, pageHeight.value),
   };
   const output = document.createElement("canvas");
-  output.width = sw;
-  output.height = sh;
+  const captureScale = Math.min(6, Math.max(1, Number(props.captureImageScale) || 1));
+  const outputWidth = Math.max(1, Math.round(sw * captureScale));
+  const outputHeight = Math.max(1, Math.round(sh * captureScale));
+  output.width = outputWidth;
+  output.height = outputHeight;
   const context = output.getContext("2d");
   if (!context) return;
-  context.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(canvas, sx, sy, sw, sh, 0, 0, outputWidth, outputHeight);
   emit("imageSelection", { pageIndex: pageIndex.value, dataUrl: output.toDataURL("image/png"), rectPct });
   try {
     (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);

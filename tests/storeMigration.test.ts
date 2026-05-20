@@ -48,6 +48,38 @@ describe("store migration", () => {
     expect("text_quote" in migrated.annotations[0]).toBe(false);
     expect(migrated.paragraph_translations).toEqual({});
     expect(migrated.settings.summary_figure_attachment_limit).toBe(10);
+    expect(migrated.settings.summary_text_char_limit).toBe(120000);
+    expect(migrated.settings.markdown_font_family).toBe("current");
+    expect(migrated.settings.markdown_code_font_family).toBe("Consolas");
+    expect(migrated.settings.markdown_line_height).toBe(1.6);
+    expect(migrated.settings.markdown_code_font_scale).toBe(0.86);
+    expect(migrated.settings.markdown_code_line_height).toBe(1.22);
+    expect(migrated.settings.markdown_code_ligatures).toBe(true);
+    expect(migrated.settings.markdown_html_live_enabled).toBe(true);
+    expect(migrated.settings.markdown_default_editor_mode).toBe("live");
+    expect(migrated.settings.simpletex_ocr_token).toBe("");
+    expect(migrated.settings.simpletex_ocr_enabled).toBe(false);
+  });
+
+  it("clamps markdown line height settings", () => {
+    expect(migrateStoreToV3({ settings: { markdown_line_height: 3 } }).settings.markdown_line_height).toBe(2.2);
+    expect(migrateStoreToV3({ settings: { markdown_line_height: 0.8 } }).settings.markdown_line_height).toBe(1.1);
+    expect(migrateStoreToV3({ settings: { markdown_line_height: "bad" } }).settings.markdown_line_height).toBe(1.6);
+  });
+
+  it("clamps markdown code typography settings", () => {
+    expect(migrateStoreToV3({ settings: { markdown_code_font_scale: 2 } }).settings.markdown_code_font_scale).toBe(1.1);
+    expect(migrateStoreToV3({ settings: { markdown_code_font_scale: 0.2 } }).settings.markdown_code_font_scale).toBe(0.7);
+    expect(migrateStoreToV3({ settings: { markdown_code_font_scale: "bad" } }).settings.markdown_code_font_scale).toBe(0.86);
+    expect(migrateStoreToV3({ settings: { markdown_code_line_height: 3 } }).settings.markdown_code_line_height).toBe(1.8);
+    expect(migrateStoreToV3({ settings: { markdown_code_line_height: 0.5 } }).settings.markdown_code_line_height).toBe(1);
+    expect(migrateStoreToV3({ settings: { markdown_code_line_height: "bad" } }).settings.markdown_code_line_height).toBe(1.22);
+  });
+
+  it("cleans markdown default editor mode", () => {
+    expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "edit" } }).settings.markdown_default_editor_mode).toBe("edit");
+    expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "preview" } }).settings.markdown_default_editor_mode).toBe("preview");
+    expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "bad" } }).settings.markdown_default_editor_mode).toBe("live");
   });
 
   it("is idempotent for v3 stores", () => {
@@ -99,7 +131,7 @@ describe("store migration", () => {
           updated_at: "2026-01-01T00:00:00.000Z",
         }],
       },
-      settings: { summary_figure_attachment_limit: 10 },
+      settings: { summary_figure_attachment_limit: 10, summary_text_char_limit: 120000 },
     });
 
     expect(migrateStoreToV3(first)).toEqual(first);
@@ -109,6 +141,12 @@ describe("store migration", () => {
     expect(migrateStoreToV3({ settings: { summary_figure_attachment_limit: 99 } }).settings.summary_figure_attachment_limit).toBe(20);
     expect(migrateStoreToV3({ settings: { summary_figure_attachment_limit: -3 } }).settings.summary_figure_attachment_limit).toBe(0);
     expect(migrateStoreToV3({ settings: { summary_figure_attachment_limit: "bad" } }).settings.summary_figure_attachment_limit).toBe(10);
+  });
+
+  it("clamps summary text character limit settings", () => {
+    expect(migrateStoreToV3({ settings: { summary_text_char_limit: 3000000 } }).settings.summary_text_char_limit).toBe(2000000);
+    expect(migrateStoreToV3({ settings: { summary_text_char_limit: -3 } }).settings.summary_text_char_limit).toBe(0);
+    expect(migrateStoreToV3({ settings: { summary_text_char_limit: "bad" } }).settings.summary_text_char_limit).toBe(120000);
   });
 
   it("cleans paragraph translation cache entries", () => {

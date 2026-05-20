@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { PanelRightOpen } from "lucide-vue-next";
 import { readerPanelTabs, type RightPanelTab } from "@/components/ReaderPanelTabs";
 import { useI18n } from "@/i18n";
@@ -21,12 +21,21 @@ const emit = defineEmits<{
 const gridRef = ref<HTMLElement | null>(null);
 const resizeHandleWidth = 3;
 const defaultPanelWidth = 560;
+const minPdfWidth = 620;
+const minPanelWidth = 320;
+const maxPanelWidth = 860;
+const layoutGutter = 12;
+const gridWidth = ref(0);
+let resizeObserver: ResizeObserver | null = null;
+let initializedPanelWidth = false;
+
+const clampedRightPanelWidth = computed(() => clampRightPanelWidth(props.rightPanelWidth));
 
 const gridStyle = computed(() => ({
   gridTemplateColumns: [
     "minmax(620px, 1fr)",
     props.collapsed ? "0" : `${resizeHandleWidth}px`,
-    props.collapsed ? "var(--rail-collapsed-width)" : `${props.rightPanelWidth}px`,
+    props.collapsed ? "var(--rail-collapsed-width)" : `${clampedRightPanelWidth.value}px`,
   ].join(" "),
 }));
 
@@ -36,19 +45,40 @@ function openTab(tab: RightPanelTab) {
 }
 
 function clampRightPanelWidth(width: number) {
-  const gridWidth = gridRef.value?.clientWidth || 1200;
-  const minPdfWidth = 620;
-  const minPanelWidth = 420;
-  const maxPanelWidth = 860;
-  const maxByGrid = Math.max(minPanelWidth, gridWidth - minPdfWidth - resizeHandleWidth - 12);
+  const availableGridWidth = gridWidth.value || gridRef.value?.clientWidth || 1200;
+  const maxByGrid = Math.max(minPanelWidth, availableGridWidth - minPdfWidth - resizeHandleWidth - layoutGutter);
   return Math.min(maxPanelWidth, Math.max(minPanelWidth, Math.min(width, maxByGrid)));
 }
 
-onMounted(() => {
-  if (!props.collapsed && props.rightPanelWidth < defaultPanelWidth) {
-    emit("update:rightPanelWidth", clampRightPanelWidth(defaultPanelWidth));
+function syncRightPanelWidth() {
+  if (props.collapsed) return;
+  const requestedWidth = !initializedPanelWidth && props.rightPanelWidth < defaultPanelWidth
+    ? clampRightPanelWidth(defaultPanelWidth)
+    : props.rightPanelWidth;
+  initializedPanelWidth = true;
+  const targetWidth = clampRightPanelWidth(requestedWidth);
+  if (targetWidth !== props.rightPanelWidth) emit("update:rightPanelWidth", targetWidth);
+}
+
+onMounted(async () => {
+  await nextTick();
+  if (gridRef.value) {
+    gridWidth.value = gridRef.value.clientWidth;
+    resizeObserver = new ResizeObserver((entries) => {
+      gridWidth.value = entries[0]?.contentRect.width || gridRef.value?.clientWidth || 0;
+      syncRightPanelWidth();
+    });
+    resizeObserver.observe(gridRef.value);
   }
+  syncRightPanelWidth();
 });
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+});
+
+watch(() => [props.collapsed, props.rightPanelWidth, gridWidth.value] as const, syncRightPanelWidth);
 
 function startResize(event: PointerEvent) {
   event.preventDefault();
@@ -82,7 +112,7 @@ function startResize(event: PointerEvent) {
     <button v-if="!collapsed" type="button" class="resize-handle" @pointerdown="startResize" />
     <nav v-if="collapsed" class="right-panel-rail" :aria-label="t('panel.tabs')">
       <div class="right-panel-rail-header">
-        <button type="button" class="right-panel-toggle" title="Expand panel" aria-label="Expand panel" @click="emit('update:collapsed', false)">
+        <button type="button" class="right-panel-toggle" :title="t('panel.expand')" :aria-label="t('panel.expand')" @click="emit('update:collapsed', false)">
           <PanelRightOpen :size="18" />
         </button>
       </div>

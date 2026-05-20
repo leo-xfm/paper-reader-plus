@@ -1,5 +1,6 @@
 import type { Ref } from "vue";
 import type { RightPanelTab } from "@/components/ReaderPanelTabs";
+import { extractPdfPageTextItems } from "@/pdf/pdfText";
 import { renderPdfRegionImage } from "@/pdf/pdfImageRendering";
 import { findPdfFigureTargets } from "@/pdf/pdfReferences";
 import type { PdfDocumentProxyLike, PdfTextItem } from "@/pdf/pdfTypes";
@@ -67,6 +68,12 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     return Math.min(20, Math.max(0, Math.trunc(value)));
   }
 
+  function summaryTextCharLimit() {
+    const value = Number(options.settings.value?.summary_text_char_limit ?? 120000);
+    if (!Number.isFinite(value)) return 120000;
+    return Math.min(2000000, Math.max(0, Math.trunc(value)));
+  }
+
   async function saveAiHistory() {
     if (!options.context.value) return;
     const history = options.aiMessages.value
@@ -78,18 +85,42 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     options.onAiHistorySaved?.(documentId, history);
   }
 
-  function buildExtractedPdfSummarySource() {
-    const chunks = Object.entries(options.pageTextItems.value)
+  function limitSummaryText(content: string) {
+    const limit = summaryTextCharLimit();
+    return limit > 0 ? content.slice(0, limit) : content;
+  }
+
+  async function extractWholePdfTextItems() {
+    const document = options.pdfDocument.value;
+    if (!document) return options.pageTextItems.value;
+    const next = { ...options.pageTextItems.value };
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const pageIndex = pageNumber - 1;
+      if (next[pageIndex]?.length) continue;
+      try {
+        next[pageIndex] = await extractPdfPageTextItems(document, pageNumber);
+      } catch {
+        next[pageIndex] = [];
+      }
+    }
+    options.pageTextItems.value = next;
+    return next;
+  }
+
+  async function buildExtractedPdfSummarySource() {
+    const pageItems = await extractWholePdfTextItems();
+    const chunks = Object.entries(pageItems)
       .sort(([left], [right]) => Number(left) - Number(right))
       .map(([pageIndex, items]) => {
         const text = items.map((item) => item.text).join(" ").replace(/\s+/g, " ").trim();
         return text ? `Page ${Number(pageIndex) + 1}\n${text}` : "";
       })
       .filter(Boolean);
+    const content = chunks.join("\n\n");
     return {
       mode: "pdf-extractor" as const,
-      label: "PDF text extracted from loaded pages",
-      content: chunks.join("\n\n").slice(0, 120000) || "(no loaded PDF text; scroll pages to load text or choose another summary source)",
+      label: "PDF text extracted from the whole document",
+      content: limitSummaryText(content) || "(no PDF text could be extracted; choose another summary source)",
     };
   }
 
@@ -104,12 +135,12 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
           summary_source: {
             mode,
             label: `LaTeX source: ${latex.file_name}`,
-            content: latex.content.slice(0, 120000),
+            content: limitSummaryText(latex.content),
           },
         };
       } catch (cause) {
         options.showNotice(cause instanceof Error ? cause.message : String(cause));
-        return { ...base, summary_source: buildExtractedPdfSummarySource() };
+        return { ...base, summary_source: await buildExtractedPdfSummarySource() };
       }
     }
     if (mode === "pdf-direct") {
@@ -128,13 +159,13 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         ...base,
         summary_source: {
           mode: "pdf-extractor",
-          label: "PDF text extracted from loaded pages",
+          label: "PDF text extracted from the whole document",
           content: "(loaded PDF text context disabled in AI Context settings)",
         },
       };
     }
     const figureLimit = summaryFigureLimit();
-    const next: ReaderContextPayload = { ...base, summary_source: buildExtractedPdfSummarySource() };
+    const next: ReaderContextPayload = { ...base, summary_source: await buildExtractedPdfSummarySource() };
     if (!options.pdfDocument.value || figureLimit <= 0) return next;
     try {
       const targets = await findPdfFigureTargets(options.pdfDocument.value, figureLimit);

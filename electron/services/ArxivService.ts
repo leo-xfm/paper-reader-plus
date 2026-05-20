@@ -119,7 +119,7 @@ export async function fetchArxivBuffer(url: string, label: string, options: Fetc
   return new Promise<Buffer>((resolve, reject) => {
     const request = httpsGet(
       url,
-      { headers: { "User-Agent": "PaperReaderPlus/0.1" }, timeout: ARXIV_REQUEST_TIMEOUT_MS, agent: proxyAgentFor(url, options.settings) },
+      { headers: { "User-Agent": "PaperReaderPlus/0.2" }, timeout: ARXIV_REQUEST_TIMEOUT_MS, agent: proxyAgentFor(url, options.settings) },
       (response) => {
         const statusCode = response.statusCode || 0;
         const location = response.headers.location;

@@ -1,8 +1,9 @@
 ﻿import { join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { createApplicationMenu, type MenuAction } from "./appMenu.js";
-import { createIpcContext, getSettings, initStorage, registerIpc } from "./ipc/registerIpc.js";
-import { importSupportedFileFromPath } from "./ipc/libraryIpc.js";
+import { createIpcContext, flushStore, getSettings, initStorage, registerIpc } from "./ipc/registerIpc.js";
+import { importMarkdownDocumentFromPath, importSupportedFileFromPath } from "./ipc/libraryIpc.js";
+import { dialogLabel } from "./i18n.js";
 import { fileAssociationArg } from "./services/FileAssociationService.js";
 import { openHelpWindow, registerHelpIpc } from "./services/HelpWindowService.js";
 
@@ -11,6 +12,16 @@ const appIconPath = join(app.getAppPath(), "icon/256.png");
 let mainWindow: BrowserWindow | null = null;
 let closeConfirmed = false;
 let pendingOpenFilePath = "";
+let quitAfterStoreFlush = false;
+
+function isAllowedExternalUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 function createWindow() {
   closeConfirmed = false;
@@ -41,7 +52,7 @@ function createWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
 
@@ -54,6 +65,11 @@ function createWindow() {
   registerIpc(mainWindow);
 }
 
+ipcMain.handle("app:open-external-url", async (_event, url: string) => {
+  if (!isAllowedExternalUrl(url)) throw new Error("ERR_UNSUPPORTED_EXTERNAL_URL");
+  await shell.openExternal(url);
+});
+
 function sendMenuAction(action: MenuAction) {
   mainWindow?.webContents.send("menu:action", action);
 }
@@ -61,29 +77,38 @@ function sendMenuAction(action: MenuAction) {
 async function importAssociatedFile(filePath: string) {
   if (!mainWindow || !filePath) return;
   try {
-    const document = await importSupportedFileFromPath(createIpcContext(mainWindow), filePath);
+    const ctx = createIpcContext(mainWindow);
+    const document = filePath.toLowerCase().endsWith(".md")
+      ? await importMarkdownDocumentFromPath(ctx, filePath)
+      : await importSupportedFileFromPath(ctx, filePath);
     mainWindow.webContents.send("app:open-file-request", document);
   } catch (cause) {
     await dialog.showMessageBox(mainWindow, {
       type: "error",
-      message: "Could not open file",
+      message: dialogLabel(getSettings().ui_language, "dialog.openFileError.message"),
       detail: cause instanceof Error ? cause.message : String(cause),
     });
   }
 }
 
 function refreshApplicationMenu() {
-  createApplicationMenu(sendMenuAction, getSettings().ui_language, () => openHelpWindow(mainWindow));
+  createApplicationMenu(sendMenuAction, getSettings().ui_language, (topic) => openHelpWindow(mainWindow, topic));
 }
 
 ipcMain.handle("app:confirm-save-on-close", async (_event, title: string) => {
   const result = await dialog.showMessageBox(mainWindow!, {
     type: "question",
-    buttons: ["Save", "Don't Save", "Cancel"],
+    buttons: [
+      dialogLabel(getSettings().ui_language, "button.save"),
+      dialogLabel(getSettings().ui_language, "button.dontSave"),
+      dialogLabel(getSettings().ui_language, "button.cancel"),
+    ],
     defaultId: 0,
     cancelId: 2,
-    message: "Save before closing?",
-    detail: title ? `Save changes to "${title}" before closing Paper Reader Plus?` : "Save the open ReaderP file before closing Paper Reader Plus?",
+    message: dialogLabel(getSettings().ui_language, "dialog.saveClose.message"),
+    detail: title
+      ? dialogLabel(getSettings().ui_language, "dialog.saveClose.detail", { title })
+      : dialogLabel(getSettings().ui_language, "dialog.saveClose.detailUntitled"),
   });
   if (result.response === 0) return "save";
   if (result.response === 1) return "discard";
@@ -93,11 +118,17 @@ ipcMain.handle("app:confirm-save-on-close", async (_event, title: string) => {
 ipcMain.handle("app:confirm-save-on-tab-close", async (_event, title: string) => {
   const result = await dialog.showMessageBox(mainWindow!, {
     type: "question",
-    buttons: ["Save", "Don't Save", "Cancel"],
+    buttons: [
+      dialogLabel(getSettings().ui_language, "button.save"),
+      dialogLabel(getSettings().ui_language, "button.dontSave"),
+      dialogLabel(getSettings().ui_language, "button.cancel"),
+    ],
     defaultId: 0,
     cancelId: 2,
-    message: "Save before closing file?",
-    detail: title ? `Save changes to "${title}" before closing this file?` : "Save changes before closing this file?",
+    message: dialogLabel(getSettings().ui_language, "dialog.saveTab.message"),
+    detail: title
+      ? dialogLabel(getSettings().ui_language, "dialog.saveTab.detail", { title })
+      : dialogLabel(getSettings().ui_language, "dialog.saveTab.detailUntitled"),
   });
   if (result.response === 0) return "save";
   if (result.response === 1) return "discard";
@@ -140,4 +171,11 @@ if (!singleInstanceLock) {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", (event) => {
+  if (quitAfterStoreFlush) return;
+  event.preventDefault();
+  quitAfterStoreFlush = true;
+  void flushStore().finally(() => app.quit());
 });

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ExternalLink, Highlighter, Underline } from "lucide-vue-next";
+import { ExternalLink, FileArchive, FileText, Highlighter, NotebookText, PanelRightClose, ScrollText, Underline } from "lucide-vue-next";
+import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import PdfWorkspace from "@/components/PdfWorkspace.vue";
 import SelectionToolbar from "@/components/SelectionToolbar.vue";
 import UiDropdown from "@/components/UiDropdown.vue";
+import ImageSizeModal from "@/components/ImageSizeModal.vue";
 import { usePdfDocument } from "@/composables/usePdfDocument";
 import { usePdfPages } from "@/composables/usePdfPages";
 import { usePdfSearch } from "@/composables/usePdfSearch";
@@ -12,7 +14,8 @@ import { useAnnotationActions } from "@/composables/useAnnotationActions";
 import { useI18n } from "@/i18n";
 import { linkedImageMarkdown, resizeMarkdownImage, markdownImagePattern } from "@/services/MarkdownImageService";
 import { ANNOTATION_COLORS, sortAnnotations, type AnnotationToolMode } from "@/services/ReaderAnnotationService";
-import { buildImageRegionAnchorCreateRequest, type ReaderSelection } from "@/services/ReaderAnchorService";
+import { buildImageRegionAnchorCreateRequest, type ReaderDocumentView, type ReaderSelection } from "@/services/ReaderAnchorService";
+import { buildTemplatedMarkdownQuote } from "@/services/QuoteTemplateService";
 import { toIpcPlainObject } from "@/services/IpcPayloadService";
 import { buildReaderContextPayload } from "@/services/ReaderContextService";
 import type { Annotation, DocumentContext, LibraryDocument, RectPct, Settings } from "@/types";
@@ -23,15 +26,17 @@ const props = defineProps<{
   documentId?: string;
   anchorId?: string;
   navigationKey?: number;
+  sourceView?: ReaderDocumentView;
   historyDocuments?: LibraryDocument[];
-  noteDraft: string;
+  getReadermMarkdown: () => string;
+  getReadermInsertionSelection?: () => { start: number; end: number } | undefined;
   readermDocumentId: string;
-  captureRequest?: { requestId: number; selection?: { start: number; end: number } } | null;
+  captureRequest?: { requestId: number; selection?: { start: number; end: number }; kind?: "image" | "formula" } | null;
   settings?: Settings | null;
 }>();
 
 const emit = defineEmits<{
-  (event: "update:noteDraft", value: string): void;
+  (event: "updateReadermMarkdown", value: string): void;
   (event: "translationModal", value: {
     provider: "google" | "baidu";
     targetLanguage: string;
@@ -43,8 +48,11 @@ const emit = defineEmits<{
   } | null): void;
   (event: "notice", message: string): void;
   (event: "selectDocument", documentId: string): void;
+  (event: "updateSourceView", value: ReaderDocumentView): void;
   (event: "openDocument", documentId: string): void;
+  (event: "linkClick", payload: { href: string; event: MouseEvent; force?: boolean }): void;
   (event: "readermIndexed", context: DocumentContext): void;
+  (event: "collapse"): void;
 }>();
 
 const { t } = useI18n();
@@ -65,7 +73,14 @@ const referencePreviewFixedPosition = ref<{ left: number; top: number } | null>(
 const tableSheet = ref<PdfTableSheet | null>(null);
 const selectionState = ref<(ReaderSelection & { position: { left: number; top: number; bottom?: number } }) | null>(null);
 const pendingImageInsert = ref<{ target: "notes" | "summary"; selection?: { start: number; end: number } } | null>(null);
-const pendingReadermImageInsert = ref<{ selection?: { start: number; end: number } } | null>(null);
+const pendingReadermImageInsert = ref<{ selection?: { start: number; end: number }; kind?: "image" | "formula" } | null>(null);
+type ImageSizeInput = { width: string; height: string };
+const imageSizeRequest = ref<{
+  currentWidth: string;
+  currentHeight: string;
+  error: string;
+  resolve: (value: ImageSizeInput | null) => void;
+} | null>(null);
 const lastCreatedAnnotationId = ref<string | null>(null);
 const annotationCommentEditor = ref<{
   annotationId: string;
@@ -79,10 +94,12 @@ const annotationCommentTextarea = ref<HTMLTextAreaElement | null>(null);
 const notesMode = ref<"edit" | "live" | "preview">("live");
 const rightPanelTab = ref<RightPanelTab>("annotations");
 const rightPanelCollapsed = ref(false);
+const sourceView = ref<ReaderDocumentView>(props.sourceView || "pdf");
 const selectedText = computed(() => selectionState.value?.text || "");
+const activeSettings = computed(() => props.settings || null);
 const readermNoteDraft = computed({
-  get: () => props.noteDraft,
-  set: (value: string) => emit("update:noteDraft", value),
+  get: () => props.getReadermMarkdown(),
+  set: (value: string) => emit("updateReadermMarkdown", value),
 });
 
 const { pdfDocument, pageNumbers, loadPdf, clearPdf } = usePdfDocument();
@@ -108,7 +125,16 @@ const {
   nextSearch,
 } = usePdfSearch(pageTextItems, scrollToPage, pdfDocument);
 
-const documentTitle = computed(() => context.value?.document.title || "Referenced PDF");
+const isMarkdownDocument = computed(() => {
+  const sourceType = context.value?.document.source_type;
+  return sourceType === "markdown" || sourceType === "readerm";
+});
+const showPdfWorkspace = computed(() => sourceView.value === "pdf" && !isMarkdownDocument.value);
+const markdownSource = computed(() => {
+  if (!context.value) return "";
+  return sourceView.value === "summary" ? context.value.summary.content : context.value.note.content;
+});
+const documentTitle = computed(() => context.value?.document.title || t("readerm.referencedSource"));
 const totalPages = computed(() => pageNumbers.value.length);
 const annotations = computed(() => sortAnnotations(context.value?.annotations || []));
 const canUseTranslationApi = computed(() => props.settings?.translator_mode === "api");
@@ -116,11 +142,17 @@ const currentPageIndex = computed(() => Math.max(0, currentPageNumber.value - 1)
 const visibleSearchMatches = computed(() => searchOpen.value && searchQuery.value.trim() ? searchMatches.value : []);
 const visibleActiveSearchMatch = computed(() => searchOpen.value && searchQuery.value.trim() ? activeSearchMatch.value : null);
 const pdfSourceOptions = computed(() => [
-  { value: "", label: t("readerm.referencedPdf") },
+  { value: "", label: t("readerm.referencedSource"), icon: FileArchive },
   ...(props.historyDocuments || []).map((document) => ({
     value: document.document_id,
     label: document.title,
+    icon: document.source_type === "readerm" ? NotebookText : FileArchive,
   })),
+]);
+const sourceViewOptions = computed(() => [
+  { value: "pdf", label: t("readerm.sourcePdf"), icon: FileArchive, disabled: isMarkdownDocument.value },
+  { value: "markdown", label: t("readerm.sourceMarkdown"), icon: FileText },
+  { value: "summary", label: t("readerm.sourceSummary"), icon: ScrollText },
 ]);
 const annotationCommentEditorStyle = computed(() => {
   const editor = annotationCommentEditor.value;
@@ -162,6 +194,7 @@ const {
 });
 
 const {
+  ensureAnchor,
   createAnnotation,
   handleSelection,
   handleAnnotationToolMode,
@@ -171,7 +204,6 @@ const {
   undoLastAnnotation,
   copySelectedText,
   copyQuote,
-  quoteToNote,
   handleAnnotationClick,
 } = useAnnotationActions({
   context,
@@ -187,6 +219,7 @@ const {
   annotationCommentTextarea,
   noteDraft: readermNoteDraft,
   notesMode,
+  settings: activeSettings,
   rightPanelTab,
   rightPanelCollapsed,
   pageTextItems,
@@ -220,11 +253,29 @@ watch(
   { immediate: true },
 );
 
+watch(() => props.sourceView, (value) => {
+  const next = value || "pdf";
+  if (next === sourceView.value) return;
+  sourceView.value = next;
+});
+
+watch(sourceView, () => {
+  if (!context.value) return;
+  activeAnchor.value = null;
+  activeAnnotation.value = null;
+  selectionState.value = null;
+  pageTextItems.value = {};
+  clearPdf();
+  clearPages();
+  emit("updateSourceView", sourceView.value);
+  if (showPdfWorkspace.value) void loadCurrentPdf(props.anchorId || "");
+});
+
 watch(
   () => props.captureRequest?.requestId,
   (requestId) => {
     if (!requestId) return;
-    beginReadermRegionCapture(props.captureRequest?.selection);
+    beginReadermRegionCapture(props.captureRequest?.selection, props.captureRequest?.kind || "image");
   },
 );
 
@@ -259,14 +310,29 @@ async function openReferencedDocument(documentId: string, anchorId = "") {
     context.value = nextContext;
     titleDraft.value = nextContext.document.title;
     if (nextContext.document.source_type === "markdown" || nextContext.document.source_type === "readerm") {
-      error.value = t("readerm.nonPdfReference");
+      if (sourceView.value === "pdf") sourceView.value = "markdown";
       return;
     }
+    if (sourceView.value === "pdf") await loadCurrentPdf(anchorId);
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function loadCurrentPdf(anchorId = "") {
+  const currentContext = context.value;
+  const documentId = currentContext?.document.document_id;
+  if (!currentContext || !documentId || isMarkdownDocument.value) return;
+  loading.value = true;
+  error.value = "";
+  try {
     const raw = await window.paperReaderPlus.getPdfData(documentId);
     const data = raw instanceof ArrayBuffer ? raw : new Uint8Array(raw).buffer;
     await loadPdf(data);
     await nextTick();
-    const anchor = anchorId ? nextContext.anchors.find((item) => item.anchor_id === anchorId) || null : null;
+    const anchor = anchorId ? currentContext.anchors.find((item) => item.anchor_id === anchorId) || null : null;
     activeAnchor.value = anchor;
     scrollToPage(anchor?.page_index || 0, anchor ? { rectsPct: anchor.rects_pct, block: "center" } : undefined);
   } catch (cause) {
@@ -324,7 +390,7 @@ async function translateSelectionInReadermPane() {
   const readerContext = buildReaderContextPayload({
     document: context.value.document,
     context: context.value,
-    note: props.noteDraft,
+    note: props.getReadermMarkdown(),
     summary: "",
     selection: {
       text: selectionState.value.text,
@@ -392,19 +458,43 @@ async function handleReadermParagraphAction(payload: {
   }
 }
 
+async function quoteToReaderm() {
+  const anchor = await ensureAnchor("selection");
+  const currentContext = context.value;
+  if (!anchor || !currentContext) {
+    showNotice("Select text first");
+    return;
+  }
+  try {
+    const nextMarkdown = insertMarkdownAt(props.getReadermMarkdown(), buildTemplatedMarkdownQuote({
+      anchor,
+      document: currentContext.document,
+      text: selectionState.value?.text,
+      template: props.settings?.quote_to_readerm_template,
+    }), props.getReadermInsertionSelection?.());
+    emit("updateReadermMarkdown", nextMarkdown);
+    await window.paperReaderPlus.saveNote(props.readermDocumentId, nextMarkdown);
+    emit("readermIndexed", await window.paperReaderPlus.getDocumentContext(props.readermDocumentId));
+    selectionState.value = null;
+    showNotice(t("readerm.quoteInserted"));
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
 function insertMarkdownAt(value: string, markdown: string, selection?: { start: number; end: number }) {
   const insertion = `\n\n${markdown}\n\n`;
   if (!selection) return `${value}${insertion}`;
   return `${value.slice(0, selection.start)}${insertion}${value.slice(selection.end)}`;
 }
 
-function beginReadermRegionCapture(selection?: { start: number; end: number }) {
+function beginReadermRegionCapture(selection?: { start: number; end: number }, kind: "image" | "formula" = "image") {
   if (!props.readermDocumentId) return;
   if (!context.value || context.value.document.source_type === "markdown" || context.value.document.source_type === "readerm") {
     showNotice(t("readerm.selectPdfBeforeCapture"));
     return;
   }
-  pendingReadermImageInsert.value = { selection };
+  pendingReadermImageInsert.value = { selection, kind };
   pendingImageInsert.value = null;
   selectionState.value = null;
   annotationToolMode.value = "image";
@@ -418,6 +508,18 @@ async function captureReadermImageRegion(payload: { pageIndex: number; dataUrl: 
     return;
   }
   try {
+    if (pending.kind === "formula") {
+      if (!props.settings?.simpletex_ocr_token?.trim()) throw new Error("SimpleTex OCR token is not configured.");
+      const recognized = await window.paperReaderPlus.recognizeLatexImage(payload.dataUrl);
+      const nextMarkdown = insertMarkdownAt(props.getReadermMarkdown(), `$$\n${recognized.latex.trim()}\n$$`, pending.selection);
+      emit("updateReadermMarkdown", nextMarkdown);
+      await window.paperReaderPlus.saveNote(props.readermDocumentId, nextMarkdown);
+      emit("readermIndexed", await window.paperReaderPlus.getDocumentContext(props.readermDocumentId));
+      pendingReadermImageInsert.value = null;
+      annotationToolMode.value = "select";
+      showNotice(t("readerm.formulaInserted"));
+      return;
+    }
     const result = await window.paperReaderPlus.saveImageDataUrl(
       props.readermDocumentId,
       payload.dataUrl,
@@ -429,8 +531,8 @@ async function captureReadermImageRegion(payload: { pageIndex: number; dataUrl: 
     );
     context.value.anchors = [...context.value.anchors, anchor];
     activeAnchor.value = anchor;
-    const nextMarkdown = insertMarkdownAt(props.noteDraft, linkedImageMarkdown(result.markdown, anchor), pending.selection);
-    emit("update:noteDraft", nextMarkdown);
+    const nextMarkdown = insertMarkdownAt(props.getReadermMarkdown(), linkedImageMarkdown(result.markdown, anchor), pending.selection);
+    emit("updateReadermMarkdown", nextMarkdown);
     await window.paperReaderPlus.saveNote(props.readermDocumentId, nextMarkdown);
     emit("readermIndexed", await window.paperReaderPlus.getDocumentContext(props.readermDocumentId));
     pendingReadermImageInsert.value = null;
@@ -446,32 +548,72 @@ async function captureReadermImageRegion(payload: { pageIndex: number; dataUrl: 
 async function pasteReadermImage(payload: { dataUrl: string; selection?: { start: number; end: number } }) {
   try {
     const result = await window.paperReaderPlus.saveImageDataUrl(props.readermDocumentId, payload.dataUrl, "pasted-image");
-    emit("update:noteDraft", insertMarkdownAt(props.noteDraft, result.markdown, payload.selection));
+    emit("updateReadermMarkdown", insertMarkdownAt(props.getReadermMarkdown(), result.markdown, payload.selection));
     showNotice(t("readerm.imageInserted"));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
   }
 }
 
-function resizeReadermImage(assetPath: string) {
-  const match = props.noteDraft.match(markdownImagePattern(assetPath));
+function imageSizeIsValid(size: ImageSizeInput) {
+  const width = size.width.trim() ? Number(size.width.trim()) : 0;
+  const height = size.height.trim() ? Number(size.height.trim()) : 0;
+  return Number.isFinite(width) && width >= 0 && width <= 9999
+    && Number.isFinite(height) && height >= 0 && height <= 9999;
+}
+
+function requestImageSize(current: ImageSizeInput) {
+  imageSizeRequest.value?.resolve(null);
+  return new Promise<ImageSizeInput | null>((resolve) => {
+    imageSizeRequest.value = {
+      currentWidth: current.width,
+      currentHeight: current.height,
+      error: "",
+      resolve,
+    };
+  });
+}
+
+function confirmImageSize(value: ImageSizeInput) {
+  if (!imageSizeRequest.value) return;
+  if (!imageSizeIsValid(value)) {
+    imageSizeRequest.value = {
+      ...imageSizeRequest.value,
+      error: t("markdown.imageSizeInvalid"),
+    };
+    return;
+  }
+  const { resolve } = imageSizeRequest.value;
+  imageSizeRequest.value = null;
+  resolve(value);
+}
+
+function cancelImageSize() {
+  const request = imageSizeRequest.value;
+  imageSizeRequest.value = null;
+  request?.resolve(null);
+}
+
+async function resizeReadermImage(assetPath: string) {
+  const markdown = props.getReadermMarkdown();
+  const match = markdown.match(markdownImagePattern(assetPath));
   if (!match) {
     showNotice("Could not find this image in the current markdown.");
     return;
   }
   const currentWidth = match[3] || "";
   const currentHeight = match[4] || "";
-  const widthInput = window.prompt("Image width in pixels. Leave blank for auto.", currentWidth);
-  if (widthInput === null) return;
-  const heightInput = window.prompt("Image height in pixels. Leave blank for auto.", currentHeight);
-  if (heightInput === null) return;
+  const size = await requestImageSize({ width: currentWidth, height: currentHeight });
+  if (!size) return;
+  const widthInput = size.width;
+  const heightInput = size.height;
   const width = widthInput.trim() ? Number(widthInput.trim()) : 0;
   const height = heightInput.trim() ? Number(heightInput.trim()) : 0;
   if ((!Number.isFinite(width) || width < 0 || width > 9999) || (!Number.isFinite(height) || height < 0 || height > 9999)) {
     showNotice("Image size must be between 0 and 9999 pixels.");
     return;
   }
-  emit("update:noteDraft", resizeMarkdownImage(props.noteDraft, assetPath, Math.round(width), Math.round(height)));
+  emit("updateReadermMarkdown", resizeMarkdownImage(markdown, assetPath, Math.round(width), Math.round(height)));
   showNotice("Image size updated");
 }
 
@@ -483,7 +625,7 @@ defineExpose({
 function handleKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
     const target = event.target as HTMLElement | null;
-    if (!target?.closest(".readerm-pdf-pane")) return;
+    if (!target?.closest(".readerm-pdf-pane") || target.closest(".live-codemirror-editor, .markdown-textarea, .readerm-textarea")) return;
     event.preventDefault();
     searchOpen.value = true;
     return;
@@ -525,24 +667,51 @@ function handleGlobalPointerDown(event: PointerEvent) {
 <template>
   <section class="readerm-pdf-pane">
     <header class="readerm-pdf-sourcebar">
-      <label>{{ t("readerm.pdfSource") }}</label>
+      <label>{{ t("readerm.source") }}</label>
       <UiDropdown
+        class="readerm-source-document"
         :model-value="documentId || ''"
-        :title="t('readerm.pdfSource')"
+        :title="t('readerm.source')"
         :options="pdfSourceOptions"
         @update:model-value="emit('selectDocument', $event)"
+      />
+      <UiDropdown
+        class="readerm-source-view"
+        v-model="sourceView"
+        :title="t('readerm.sourceView')"
+        :options="sourceViewOptions"
+        menu-class="readerm-source-view-menu"
       />
       <button
         type="button"
         class="readerm-pdf-open-source"
-        :title="t('readerm.openPdfSource')"
+        :title="t('readerm.openSource')"
         :disabled="!documentId"
         @click="openSelectedPdfSource"
       >
         <ExternalLink :size="16" />
       </button>
+      <button
+        type="button"
+        class="readerm-pdf-collapse"
+        :title="t('readerm.collapsePdf')"
+        :aria-label="t('readerm.collapsePdf')"
+        @click="emit('collapse')"
+      >
+        <PanelRightClose :size="16" />
+      </button>
     </header>
+    <section v-if="!showPdfWorkspace" class="readerm-markdown-source">
+      <MarkdownPreview
+        class="readerm-markdown-source-preview"
+        :source="markdownSource || t('markdown.noNotes')"
+        :document-id="context?.document.document_id"
+        :settings="settings"
+        @link-click="emit('linkClick', $event)"
+      />
+    </section>
     <PdfWorkspace
+      v-else
       v-model:title-draft="titleDraft"
       v-model:page-jump-draft="pageJumpDraft"
       v-model:search-query="searchQuery"
@@ -574,6 +743,7 @@ function handleGlobalPointerDown(event: PointerEvent) {
       :author-preview="null"
       :dictionary-entries="[]"
       :dictionary-preview="null"
+      :capture-image-scale="settings?.capture_image_scale || 2"
       :can-rename="false"
       :can-open-annotations="false"
       :can-translate="canUseTranslationApi"
@@ -592,7 +762,7 @@ function handleGlobalPointerDown(event: PointerEvent) {
       @update:annotation-tool-mode="handleAnnotationToolMode"
       @delete-document="showUnavailable"
       @quote="copyQuote"
-      @quote-to-note="quoteToNote"
+      @quote-to-note="quoteToReaderm"
       @translate="translateSelectionInReadermPane"
       @ask-ai="showUnavailable"
       @previous-search="nextSearch(-1)"
@@ -634,13 +804,22 @@ function handleGlobalPointerDown(event: PointerEvent) {
       :can-translate="canUseTranslationApi"
       :can-metaphor="false"
       :can-ask-ai="false"
+      :quote-to-note-title="t('selection.quoteToReaderm')"
       @copy="copySelectedText"
       @quote="copyQuote"
-      @quote-to-note="quoteToNote"
+      @quote-to-note="quoteToReaderm"
       @annotate="createAnnotation"
       @translate="translateSelectionInReadermPane"
       @metaphor="showUnavailable"
       @ask-ai="showUnavailable"
+    />
+    <ImageSizeModal
+      v-if="imageSizeRequest"
+      :current-width="imageSizeRequest.currentWidth"
+      :current-height="imageSizeRequest.currentHeight"
+      :error="imageSizeRequest.error"
+      @confirm="confirmImageSize"
+      @cancel="cancelImageSize"
     />
     <section
       v-if="annotationCommentEditor"

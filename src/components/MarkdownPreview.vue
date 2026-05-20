@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { createLruStringCache } from "@/composables/useLruStringCache";
+import { markdownBodyFontFamily, markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import { renderMarkdown } from "@/services/MarkdownRenderService";
+import { renderMermaidElements } from "@/services/MermaidRenderService";
+import type { Settings } from "@/types";
 
-const props = defineProps<{ source: string; documentId?: string }>();
+const props = defineProps<{ source: string; documentId?: string; settings?: Settings | null }>();
 const emit = defineEmits<{
   (event: "linkClick", payload: { href: string; event: MouseEvent }): void;
   (event: "imageContext", payload: { assetPath: string; event: MouseEvent }): void;
 }>();
 
 const resolvedSource = ref("");
-const assetUrlCache = new Map<string, string>();
+const previewRoot = ref<HTMLDivElement | null>(null);
+const assetUrlCache = createLruStringCache(50);
 const dataUrlAssetPaths = new Map<string, string>();
 
 function normalizeAssetPath(value: string) {
@@ -57,6 +62,14 @@ async function resolveAssetUrls(source: string, documentId?: string) {
 }
 
 watch(
+  () => props.documentId,
+  () => {
+    assetUrlCache.clear();
+    dataUrlAssetPaths.clear();
+  },
+);
+
+watch(
   () => [props.source, props.documentId] as const,
   async ([source, documentId], _oldValue, onCleanup) => {
     let canceled = false;
@@ -67,7 +80,27 @@ watch(
   { immediate: true },
 );
 
-const renderedHtml = computed(() => renderMarkdown(resolvedSource.value || ""));
+const renderOptions = computed(() => ({
+  codeLineNumbers: props.settings?.markdown_code_line_numbers !== false,
+  highlightEnabled: props.settings?.markdown_highlight_enabled !== false,
+  mathEnabled: props.settings?.markdown_math_enabled !== false,
+}));
+const highlightColor = computed(() => props.settings?.markdown_highlight_color || "#fff3bf");
+const bodyFontFamily = computed(() => markdownBodyFontFamily(props.settings?.markdown_font_family || "current"));
+const codeFontFamily = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
+const lineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const codeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
+const codeLineHeight = computed(() => props.settings?.markdown_code_line_height || 1.22);
+const renderedHtml = computed(() => renderMarkdown(resolvedSource.value || "", renderOptions.value));
+
+watch(
+  renderedHtml,
+  async () => {
+    await nextTick();
+    if (previewRoot.value) renderMermaidElements(previewRoot.value);
+  },
+  { immediate: true, flush: "post" },
+);
 
 function handleClick(event: MouseEvent) {
   const link = (event.target as HTMLElement | null)?.closest("a") as HTMLAnchorElement | null;
@@ -86,5 +119,13 @@ function handleContextMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <div class="markdown-preview" @click="handleClick" @contextmenu="handleContextMenu" v-html="renderedHtml" />
+  <div
+    ref="previewRoot"
+    class="markdown-preview"
+    :style="{ '--markdown-highlight-color': highlightColor, '--markdown-body-font-family': bodyFontFamily, '--markdown-code-font-family': codeFontFamily, '--markdown-line-height': lineHeight, '--markdown-code-font-scale': codeFontScale, '--markdown-code-line-height': codeLineHeight }"
+    @click="handleClick"
+    @submit.prevent
+    @contextmenu="handleContextMenu"
+    v-html="renderedHtml"
+  />
 </template>

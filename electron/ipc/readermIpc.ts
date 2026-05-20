@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { dialog, ipcMain } from "electron";
+import { dialogLabel } from "../i18n.js";
 import {
   createReadermPackageBuffer,
   readReadermPackageBuffer,
   type ReadermReference,
 } from "../services/ReadermPackageService.js";
-import { normalizeMarkdownAssetPath } from "../services/AssetService.js";
+import { mimeTypeForImagePath, normalizeMarkdownAssetPath, sanitizeAssetFileName } from "../services/AssetService.js";
 import type { StoredAnchor, StoredAnnotation } from "../storeMigration.js";
 import type { DbDocument, IpcContext } from "./storeContext.js";
 
@@ -22,28 +25,37 @@ function referencedDocuments(ctx: IpcContext, references: ReadermReference[], do
   return [document, ...documents.filter((item) => item.document_id !== document.document_id)];
 }
 
-function readReferencedFiles(documents: DbDocument[]) {
+async function fileSize(filePath: string) {
+  return (await stat(filePath)).size;
+}
+
+async function readReferencedFiles(documents: DbDocument[]) {
   const pdfDataByDocumentId: Record<string, Buffer> = {};
   const latexDataByDocumentId: Record<string, Buffer> = {};
   for (const document of documents) {
     if (document.source_type !== "markdown" && document.source_type !== "readerm" && existsSync(document.file_path)) {
-      pdfDataByDocumentId[document.document_id] = readFileSync(document.file_path);
+      pdfDataByDocumentId[document.document_id] = await readFile(document.file_path);
     }
     if (document.latex_path && existsSync(document.latex_path)) {
-      latexDataByDocumentId[document.document_id] = readFileSync(document.latex_path);
+      latexDataByDocumentId[document.document_id] = await readFile(document.latex_path);
     }
   }
   return { pdfDataByDocumentId, latexDataByDocumentId };
 }
 
 async function confirmExportAnchors(ctx: IpcContext) {
+  const language = ctx.getSettings().ui_language;
   const result = await dialog.showMessageBox(ctx.window, {
     type: "question",
-    buttons: ["Keep anchors", "Remove anchors", "Cancel"],
+    buttons: [
+      dialogLabel(language, "button.keepAnchors"),
+      dialogLabel(language, "button.removeAnchors"),
+      dialogLabel(language, "button.cancel"),
+    ],
     defaultId: 0,
     cancelId: 2,
-    message: "Export anchors?",
-    detail: "Choose whether this exported ReaderM should include reader anchors and annotations. Removing anchors does not change local data.",
+    message: dialogLabel(language, "dialog.exportAnchors.message"),
+    detail: dialogLabel(language, "dialog.exportAnchors.detail"),
   });
   if (result.response === 0) return true;
   if (result.response === 1) return false;
@@ -53,7 +65,7 @@ async function confirmExportAnchors(ctx: IpcContext) {
 async function createReadermSnapshot(ctx: IpcContext, document: DbDocument, markdown: string, keepAnchors = true) {
   const { references } = ctx.buildReadermReferenceContext(markdown);
   const documents = referencedDocuments(ctx, references, document);
-  const { pdfDataByDocumentId, latexDataByDocumentId } = readReferencedFiles(documents);
+  const { pdfDataByDocumentId, latexDataByDocumentId } = await readReferencedFiles(documents);
   const referencedIds = new Set(references.map((reference) => reference.document_id));
   return createReadermPackageBuffer({
     document,
@@ -65,21 +77,21 @@ async function createReadermSnapshot(ctx: IpcContext, document: DbDocument, mark
     symbols: [...referencedIds].flatMap((id) => ctx.store.symbols[id] || []),
     pdfDataByDocumentId,
     latexDataByDocumentId,
-    assets: ctx.packageAssetsForDocument(document.document_id, markdown),
+    assets: await ctx.packageAssetsForDocumentAsync(document.document_id, markdown),
   });
 }
 
-function createReadermDocument(ctx: IpcContext, title: string, markdown: string) {
+async function createReadermDocument(ctx: IpcContext, title: string, markdown: string) {
   const id = randomUUID();
   const target = join(ctx.libraryDir, `${id}.md`);
-  writeFileSync(target, markdown, "utf8");
+  await writeFile(target, markdown, "utf8");
   const timestamp = ctx.now();
   const document: DbDocument = {
     document_id: id,
     title,
     file_name: `${title}.readerm`,
     file_path: target,
-    file_size: statSync(target).size,
+    file_size: await fileSize(target),
     source_type: "readerm",
     created_at: timestamp,
     updated_at: timestamp,
@@ -92,9 +104,84 @@ function createReadermDocument(ctx: IpcContext, title: string, markdown: string)
   return document;
 }
 
+function readermDefaultPathFromDocument(document: DbDocument) {
+  const baseName = basename(document.file_name || document.file_path || packageDefaultName(document), extname(document.file_name || document.file_path || ""));
+  const safeName = (baseName || document.title || "reader-markdown").replace(/[<>:"/\\|?*]+/g, "_");
+  const sourceDir = document.source_path ? dirname(document.source_path) : document.file_path ? dirname(document.file_path) : undefined;
+  return sourceDir ? join(sourceDir, `${safeName}.readerm`) : `${safeName}.readerm`;
+}
+
+function sourceBaseDir(document: DbDocument) {
+  return dirname(document.source_path || document.file_path);
+}
+
+function localImagePathFromMarkdownUrl(rawUrl: string, document: DbDocument) {
+  const withoutQuery = String(rawUrl || "").trim().split(/[?#]/)[0];
+  if (!withoutQuery || /^(https?:|data:|readerp:|readerm:|\/reader\?)/i.test(withoutQuery)) return "";
+  try {
+    if (/^file:\/\//i.test(withoutQuery)) return fileURLToPath(withoutQuery);
+  } catch {
+    return "";
+  }
+  const decoded = decodeURIComponent(withoutQuery);
+  return isAbsolute(decoded) ? decoded : resolve(sourceBaseDir(document), decoded);
+}
+
+async function cloneReferencedAsset(ctx: IpcContext, sourceDocument: DbDocument, targetDocument: DbDocument, assetPath: string) {
+  const normalized = normalizeMarkdownAssetPath(assetPath);
+  if (!normalized) return false;
+  const fileName = basename(normalized);
+  const asset = ctx.listAssets(sourceDocument.document_id).find((item) => item.file_name === fileName);
+  if (asset && existsSync(asset.path)) {
+    await ctx.createAssetRecordAsync(targetDocument.document_id, asset.file_name, asset.mime_type, await readFile(asset.path), asset.original_name);
+    return true;
+  }
+  const sourcePath = resolve(sourceBaseDir(sourceDocument), normalized);
+  const mimeType = mimeTypeForImagePath(sourcePath);
+  if (!mimeType || !existsSync(sourcePath) || !(await stat(sourcePath)).isFile()) return false;
+  await ctx.createAssetRecordAsync(targetDocument.document_id, fileName, mimeType, await readFile(sourcePath), basename(sourcePath));
+  return true;
+}
+
+async function copyLocalMarkdownImagesToReaderm(ctx: IpcContext, sourceDocument: DbDocument, targetDocument: DbDocument, markdown: string) {
+  let output = "";
+  let lastIndex = 0;
+  const source = String(markdown || "");
+  const pattern = /!\[([^\]]*)\]\(([^)\s]+)([^)]*)\)/g;
+  for (const match of source.matchAll(pattern)) {
+    const full = match[0];
+    const alt = match[1] || "";
+    const rawUrl = match[2] || "";
+    const suffix = match[3] || "";
+    output += source.slice(lastIndex, match.index || 0);
+    lastIndex = (match.index || 0) + full.length;
+    const normalizedAssetPath = normalizeMarkdownAssetPath(rawUrl);
+    if (normalizedAssetPath) {
+      await cloneReferencedAsset(ctx, sourceDocument, targetDocument, normalizedAssetPath);
+      output += full;
+      continue;
+    }
+    const imagePath = localImagePathFromMarkdownUrl(rawUrl, sourceDocument);
+    const mimeType = imagePath ? mimeTypeForImagePath(imagePath) : "";
+    if (!mimeType || !existsSync(imagePath) || !(await stat(imagePath)).isFile()) {
+      output += full;
+      continue;
+    }
+    const asset = await ctx.createAssetRecordAsync(
+      targetDocument.document_id,
+      sanitizeAssetFileName(basename(imagePath)),
+      mimeType,
+      await readFile(imagePath),
+      basename(imagePath),
+    );
+    output += `![${alt}](assets/${asset.file_name}${suffix || ""})`;
+  }
+  return `${output}${source.slice(lastIndex)}`;
+}
+
 export function registerReadermIpc(ctx: IpcContext) {
   ipcMain.handle("readerm:create-empty", async () => {
-    const document = createReadermDocument(ctx, "Untitled ReaderM", "");
+    const document = await createReadermDocument(ctx, "Untitled ReaderM", "");
     ctx.saveStore();
     return document;
   });
@@ -107,10 +194,10 @@ export function registerReadermIpc(ctx: IpcContext) {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const source = result.filePaths[0];
-    const markdown = readFileSync(source, "utf8");
+    const markdown = await readFile(source, "utf8");
     const originalName = basename(source);
     const title = originalName.replace(new RegExp(`${extname(originalName)}$`), "");
-    const document = createReadermDocument(ctx, title, markdown);
+    const document = await createReadermDocument(ctx, title, markdown);
     const saveResult = await dialog.showSaveDialog(ctx.window, {
       title: "Save ReaderM",
       defaultPath: join(dirname(source), `${title}.readerm`),
@@ -118,8 +205,37 @@ export function registerReadermIpc(ctx: IpcContext) {
     });
     if (!saveResult.canceled && saveResult.filePath) {
       const buffer = await createReadermSnapshot(ctx, document, markdown);
-      writeFileSync(saveResult.filePath, buffer);
+      await writeFile(saveResult.filePath, buffer);
       document.package_path = saveResult.filePath;
+      document.file_name = basename(saveResult.filePath);
+    }
+    ctx.saveStore();
+    return document;
+  });
+
+  ipcMain.handle("readerm:upgrade-markdown-copy", async (_event, documentId: string, markdown?: string) => {
+    const sourceDocument = ctx.getDocument(documentId);
+    if (sourceDocument.source_type !== "markdown") throw new Error("Open a Markdown document before upgrading to ReaderM.");
+    const content = typeof markdown === "string" ? markdown : ctx.store.notes[documentId]?.content || "";
+    const document = await createReadermDocument(ctx, sourceDocument.title, content);
+    const packagedContent = await copyLocalMarkdownImagesToReaderm(ctx, sourceDocument, document, content);
+    if (packagedContent !== content) {
+      const timestamp = ctx.now();
+      await writeFile(document.file_path, packagedContent, "utf8");
+      document.file_size = await fileSize(document.file_path);
+      document.updated_at = timestamp;
+      ctx.store.notes[document.document_id] = { content: packagedContent, updated_at: timestamp };
+    }
+    const saveResult = await dialog.showSaveDialog(ctx.window, {
+      title: "Save ReaderM",
+      defaultPath: readermDefaultPathFromDocument(sourceDocument),
+      filters: [{ name: "ReaderM", extensions: ["readerm"] }],
+    });
+    if (!saveResult.canceled && saveResult.filePath) {
+      const buffer = await createReadermSnapshot(ctx, document, packagedContent);
+      await writeFile(saveResult.filePath, buffer);
+      document.package_path = saveResult.filePath;
+      document.file_name = basename(saveResult.filePath);
     }
     ctx.saveStore();
     return document;
@@ -133,19 +249,19 @@ export function registerReadermIpc(ctx: IpcContext) {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const source = result.filePaths[0];
-    const packageData = await readReadermPackageBuffer(readFileSync(source));
+    const packageData = await readReadermPackageBuffer(await readFile(source));
     const timestamp = ctx.now();
     const id = ctx.store.documents.some((item) => item.document_id === packageData.document.document_id)
       ? randomUUID()
       : packageData.document.document_id;
     const target = join(ctx.libraryDir, `${id}.md`);
-    writeFileSync(target, packageData.markdown, "utf8");
+    await writeFile(target, packageData.markdown, "utf8");
     const document: DbDocument = {
       document_id: id,
       title: packageData.manifest.title || basename(source, extname(source)),
-      file_name: packageData.manifest.file_name || basename(source),
+      file_name: basename(source),
       file_path: target,
-      file_size: statSync(target).size,
+      file_size: await fileSize(target),
       source_type: "readerm",
       package_path: source,
       created_at: timestamp,
@@ -158,13 +274,13 @@ export function registerReadermIpc(ctx: IpcContext) {
       const filePath = pdfData ? join(ctx.libraryDir, `${packageDocument.document_id}.pdf`) : join(ctx.libraryDir, `${packageDocument.document_id}.md`);
       const latexData = packageData.latexDataByDocumentId[packageDocument.document_id];
       const latexTarget = latexData ? ctx.latexTargetPath(packageDocument.document_id) : undefined;
-      if (pdfData) writeFileSync(filePath, pdfData);
-      else writeFileSync(filePath, "", "utf8");
-      if (latexData && latexTarget) writeFileSync(latexTarget, latexData);
+      if (pdfData) await writeFile(filePath, pdfData);
+      else await writeFile(filePath, "", "utf8");
+      if (latexData && latexTarget) await writeFile(latexTarget, latexData);
       ctx.store.documents.push({
         ...packageDocument,
         file_path: filePath,
-        file_size: existsSync(filePath) ? statSync(filePath).size : packageDocument.file_size,
+        file_size: existsSync(filePath) ? await fileSize(filePath) : packageDocument.file_size,
         source_type: pdfData ? "readerp" : packageDocument.source_type,
         readerp_path: source,
         latex_path: latexTarget,
@@ -175,7 +291,7 @@ export function registerReadermIpc(ctx: IpcContext) {
     ctx.store.ai_history[id] = [];
     ctx.store.symbols[id] = [];
     for (const asset of packageData.assets) {
-      ctx.createAssetRecord(
+      await ctx.createAssetRecordAsync(
         id,
         basename(normalizeMarkdownAssetPath(`assets/${asset.file_name}`)),
         asset.mime_type,
@@ -204,8 +320,9 @@ export function registerReadermIpc(ctx: IpcContext) {
     });
     if (result.canceled || !result.filePath) return null;
     const buffer = await createReadermSnapshot(ctx, document, content, keepAnchors);
-    writeFileSync(result.filePath, buffer);
+    await writeFile(result.filePath, buffer);
     document.package_path = result.filePath;
+    document.file_name = basename(result.filePath);
     ctx.saveStore();
     return result.filePath;
   });
@@ -227,9 +344,10 @@ export function registerReadermIpc(ctx: IpcContext) {
     ctx.store.notes[documentId] = { content: String(markdown || ""), updated_at: timestamp };
     document.updated_at = timestamp;
     document.package_path = targetPath;
-    writeFileSync(document.file_path, String(markdown || ""), "utf8");
+    document.file_name = basename(targetPath);
+    await writeFile(document.file_path, String(markdown || ""), "utf8");
     const buffer = await createReadermSnapshot(ctx, document, String(markdown || ""));
-    writeFileSync(targetPath, buffer);
+    await writeFile(targetPath, buffer);
     ctx.saveStore();
     return targetPath;
   });

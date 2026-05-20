@@ -16,6 +16,7 @@ import type {
   ParagraphTranslation,
   ParagraphTranslationSaveRequest,
   Settings,
+  FileAssociationExtension,
   FileAssociationStatus,
   ReaderPackageAiHistory,
   TranslateSelectionRequest,
@@ -60,7 +61,10 @@ type MenuAction =
   | "translate-selection"
   | "toggle-search"
   | "toggle-outline"
+  | "settings-general"
+  | "settings-markdown"
   | "settings-agent-api"
+  | "settings-ocr-api"
   | "settings-translation-api"
   | "settings-network-proxy"
   | "settings-file-associations"
@@ -83,8 +87,10 @@ declare global {
       createReaderPackageFromMarkdown(): Promise<LibraryDocument | null>;
       createEmptyReaderm(): Promise<LibraryDocument | null>;
       createReadermFromMarkdown(): Promise<LibraryDocument | null>;
+      upgradeMarkdownToReadermCopy(documentId: string, markdown: string): Promise<LibraryDocument | null>;
       importDroppedFile(filePath: string): Promise<LibraryDocument | null>;
       listDocuments(): Promise<LibraryDocument[]>;
+      clearDocumentHistory(mode: "readerp" | "readerm"): Promise<{ removed: number }>;
       searchLibrary(query: string): Promise<LibrarySearchResult[]>;
       getDocumentContext(documentId: string): Promise<DocumentContext>;
       getDocumentHealth(documentId: string): Promise<PackageHealthReport>;
@@ -124,8 +130,11 @@ declare global {
       getPromptTemplates(): Promise<PromptTemplateStatus[]>;
       getFileAssociationStatus(): Promise<FileAssociationStatus>;
       registerFileAssociations(): Promise<FileAssociationStatus>;
+      registerFileAssociation(extension: FileAssociationExtension): Promise<FileAssociationStatus>;
+      unregisterFileAssociation(extension: FileAssociationExtension): Promise<FileAssociationStatus>;
       testAgentSettings(settings: Partial<Settings>): Promise<ConnectionTestResponse>;
       testTranslationSettings(settings: Partial<Settings>): Promise<ConnectionTestResponse>;
+      testSimpleTexOcrSettings(settings: Partial<Settings>): Promise<ConnectionTestResponse>;
       aiChat(payload: AiChatRequest): Promise<AiChatResponse>;
       saveAiHistory(documentId: string, history: ReaderPackageAiHistory): Promise<ReaderPackageAiHistory>;
       saveCurrentReaderPackage(documentId: string, note: string, summary: string, aiHistory: ReaderPackageAiHistory): Promise<string | null>;
@@ -142,8 +151,10 @@ declare global {
         onCancel?: () => void;
       }): () => void;
       translateSelection(payload: TranslateSelectionRequest): Promise<TranslateSelectionResponse>;
+      recognizeLatexImage(dataUrl: string): Promise<{ latex: string; conf?: number; request_id?: string }>;
       writeImageToClipboard(dataUrl: string): Promise<void>;
-      getHelpContent(): Promise<string>;
+      getHelpContent(topic?: string): Promise<string>;
+      openExternalUrl(url: string): Promise<void>;
       onMenuAction(callback: (action: MenuAction) => void): () => void;
     };
   }

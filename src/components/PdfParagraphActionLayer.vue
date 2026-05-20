@@ -32,6 +32,8 @@ const emit = defineEmits<{
 
 const activeBlockId = ref("");
 let activateTimer: number | null = null;
+const paragraphMenuWidth = 268;
+const selectionToolbarWidth = 326;
 
 const blocks = computed(() => {
   if (!props.metrics || !props.textItems.length) return [];
@@ -56,11 +58,21 @@ function blockBox(block: PdfParagraphActionBlock) {
   return { left, top, right, bottom };
 }
 
+function preferredRailSide(box: { left: number; right: number }, metrics: PdfPageMetrics) {
+  return Math.round(box.left * metrics.width) >= 28 ? "left" : "right";
+}
+
+function railLineX(box: { left: number; right: number }, metrics: PdfPageMetrics) {
+  return preferredRailSide(box, metrics) === "left"
+    ? Math.max(4, Math.round(box.left * metrics.width) - 8)
+    : Math.min(metrics.width - 8, Math.round(box.right * metrics.width) + 8);
+}
+
 function railStyle(block: PdfParagraphActionBlock) {
   const metrics = props.metrics;
   if (!metrics) return {};
   const box = blockBox(block);
-  const railLeft = Math.max(4, Math.round(box.left * metrics.width) - 28);
+  const railLeft = Math.min(metrics.width - 42, Math.max(2, railLineX(box, metrics) - 19));
   const railTop = Math.round(box.top * metrics.height);
   const railHeight = Math.max(18, Math.round((box.bottom - box.top) * metrics.height));
   return {
@@ -76,10 +88,12 @@ function menuStyle(block: PdfParagraphActionBlock) {
   const box = blockBox(block);
   const page = document.querySelector<HTMLElement>(`.pdf-page[data-page-index="${props.pageIndex}"]`);
   const pageRect = page?.getBoundingClientRect();
-  const left = pageRect ? pageRect.left + box.left * pageRect.width - 18 : Math.max(8, Math.round(box.left * metrics.width) - 18);
-  const top = pageRect ? pageRect.top + box.top * pageRect.height : Math.round(box.top * metrics.height);
+  const lineX = railLineX(box, metrics);
+  const left = pageRect ? pageRect.left + lineX - paragraphMenuWidth / 2 : lineX - paragraphMenuWidth / 2;
+  const railTop = pageRect ? pageRect.top + box.top * pageRect.height : Math.round(box.top * metrics.height);
+  const top = railTop - 44 >= 8 ? railTop - 44 : railTop + 8;
   return {
-    left: `${Math.min(Math.max(8, left), Math.max(8, window.innerWidth - 268))}px`,
+    left: `${Math.min(Math.max(8, left), Math.max(8, window.innerWidth - paragraphMenuWidth))}px`,
     top: `${Math.min(Math.max(8, top), Math.max(8, window.innerHeight - 44))}px`,
   };
 }
@@ -117,15 +131,15 @@ function trigger(action: "translate" | "quote" | "askAi", block: PdfParagraphAct
   const box = blockBox(block);
   const page = document.querySelector<HTMLElement>(`.pdf-page[data-page-index="${props.pageIndex}"]`);
   const pageRect = page?.getBoundingClientRect();
-  const left = pageRect ? pageRect.left + box.left * pageRect.width : box.left * metrics.width;
+  const lineX = railLineX(box, metrics);
+  const left = pageRect ? pageRect.left + lineX - selectionToolbarWidth / 2 : lineX - selectionToolbarWidth / 2;
   const top = pageRect ? pageRect.top + box.top * pageRect.height : box.top * metrics.height;
-  const bottom = pageRect ? pageRect.top + box.bottom * pageRect.height : box.bottom * metrics.height;
   emit("paragraphAction", {
     action,
     pageIndex: block.page_index,
     text: block.text,
     rectsPct: block.rects_pct,
-    position: { left, top, bottom },
+    position: { left, top },
     source: "paragraph",
   });
 }

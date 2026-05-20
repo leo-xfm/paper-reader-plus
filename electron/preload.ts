@@ -26,7 +26,10 @@ type MenuAction =
   | "translate-selection"
   | "toggle-search"
   | "toggle-outline"
+  | "settings-general"
+  | "settings-markdown"
   | "settings-agent-api"
+  | "settings-ocr-api"
   | "settings-translation-api"
   | "settings-network-proxy"
   | "settings-file-associations"
@@ -74,8 +77,10 @@ contextBridge.exposeInMainWorld("paperReaderPlus", {
   createReaderPackageFromMarkdown: () => ipcRenderer.invoke("readerp:create-from-markdown"),
   createEmptyReaderm: () => ipcRenderer.invoke("readerm:create-empty"),
   createReadermFromMarkdown: () => ipcRenderer.invoke("readerm:create-from-markdown"),
+  upgradeMarkdownToReadermCopy: (documentId: string, markdown: string) => ipcRenderer.invoke("readerm:upgrade-markdown-copy", documentId, markdown),
   importDroppedFile: (filePath: string) => ipcRenderer.invoke("library:import-dropped-file", filePath),
   listDocuments: () => ipcRenderer.invoke("library:list-documents"),
+  clearDocumentHistory: (mode: "readerp" | "readerm") => ipcRenderer.invoke("library:clear-history", mode),
   searchLibrary: (query: string) => ipcRenderer.invoke("library:search", query),
   getDocumentContext: (documentId: string) => ipcRenderer.invoke("documents:get-context", documentId),
   getDocumentHealth: (documentId: string) => ipcRenderer.invoke("documents:get-health", documentId),
@@ -110,8 +115,11 @@ contextBridge.exposeInMainWorld("paperReaderPlus", {
   getPromptTemplates: () => ipcRenderer.invoke("settings:templates"),
   getFileAssociationStatus: () => ipcRenderer.invoke("settings:file-associations-status"),
   registerFileAssociations: () => ipcRenderer.invoke("settings:register-file-associations"),
+  registerFileAssociation: (extension: string) => ipcRenderer.invoke("settings:register-file-association", extension),
+  unregisterFileAssociation: (extension: string) => ipcRenderer.invoke("settings:unregister-file-association", extension),
   testAgentSettings: (settings: unknown) => ipcRenderer.invoke("settings:test-agent", settings),
   testTranslationSettings: (settings: unknown) => ipcRenderer.invoke("settings:test-translation", settings),
+  testSimpleTexOcrSettings: (settings: unknown) => ipcRenderer.invoke("settings:test-simpletex-ocr", settings),
   aiChat: (payload: unknown) => ipcRenderer.invoke("ai:chat", payload),
   saveAiHistory: (documentId: string, history: unknown) => ipcRenderer.invoke("ai:history:save", documentId, history),
   saveCurrentReaderPackage: (documentId: string, note: string, summary: string, aiHistory: unknown) => ipcRenderer.invoke("readerp:save-current", documentId, note, summary, aiHistory),
@@ -168,8 +176,10 @@ contextBridge.exposeInMainWorld("paperReaderPlus", {
     };
   },
   translateSelection: (payload: unknown) => ipcRenderer.invoke("translate:selection", payload),
+  recognizeLatexImage: (dataUrl: string) => ipcRenderer.invoke("ocr:latex-image", dataUrl),
   writeImageToClipboard: (dataUrl: string) => ipcRenderer.invoke("clipboard:write-image", dataUrl),
-  getHelpContent: () => ipcRenderer.invoke("help:get-content"),
+  getHelpContent: (topic?: string) => ipcRenderer.invoke("help:get-content", topic),
+  openExternalUrl: (url: string) => ipcRenderer.invoke("app:open-external-url", url),
   onMenuAction: (callback: (action: MenuAction) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, action: MenuAction) => callback(action);
     ipcRenderer.on("menu:action", listener);

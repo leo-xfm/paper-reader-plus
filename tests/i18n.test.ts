@@ -1,6 +1,26 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { messages } from "../src/i18n/messages";
 import { resolveUiLanguage, translate } from "../src/i18n";
+import { messages, zhCNOverrides } from "../src/i18n/messages";
+
+function staticI18nKeysFromSource() {
+  const keys = new Set<string>();
+  const files = execSync("rg --files src electron", { cwd: process.cwd(), encoding: "utf8" }).trim().split(/\r?\n/);
+  for (const file of files) {
+    if (!/\.(ts|vue)$/.test(file)) continue;
+    const source = readFileSync(join(process.cwd(), file), "utf8");
+    for (const pattern of [
+      /\bt\(\s*["']([^"']+)["']/g,
+      /\btranslate\(\s*[^,]+,\s*["']([^"']+)["']/g,
+    ]) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(source))) keys.add(match[1]);
+    }
+  }
+  return [...keys].sort();
+}
 
 describe("i18n", () => {
   it("keeps English and Chinese dictionaries aligned", () => {
@@ -17,5 +37,29 @@ describe("i18n", () => {
     expect(resolveUiLanguage("system", "en-US")).toBe("en-US");
     expect(resolveUiLanguage("zh-CN", "en-US")).toBe("zh-CN");
   });
-});
 
+  it("keeps recently added chrome labels localized in Chinese", () => {
+    const keys = [
+      "common.auto",
+      "library.openFiles",
+      "library.closeFile",
+      "library.expandSidebar",
+      "library.collapseSidebar",
+      "library.readermHistory",
+      "library.readerpHistory",
+      "dictionary.closePreview",
+      "panel.expand",
+      "symbol.kind.symbol",
+      "symbol.kind.abbreviation",
+    ] as const;
+
+    for (const key of keys) {
+      expect(translate("zh-CN", key)).not.toBe(translate("en-US", key));
+    }
+  });
+
+  it("does not rely on English fallback for statically used Chinese UI keys", () => {
+    const missing = staticI18nKeysFromSource().filter((key) => !(key in zhCNOverrides));
+    expect(missing).toEqual([]);
+  });
+});

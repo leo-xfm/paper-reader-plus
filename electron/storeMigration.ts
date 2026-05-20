@@ -204,12 +204,60 @@ function cleanMap(value: unknown) {
 function cleanSettings(value: unknown) {
   const settings = isRecord(value) ? { ...value } : {};
   const figureLimit = cleanNumber(settings.summary_figure_attachment_limit, 10);
+  const textLimit = cleanNumber(settings.summary_text_char_limit, 120000);
+  const captureScale = cleanNumber(settings.capture_image_scale, 2);
+  const markdownFontSize = cleanNumber(settings.markdown_default_font_size, 15);
+  const markdownLineHeight = cleanNumber(settings.markdown_line_height, 1.6);
+  const markdownCodeFontScale = cleanNumber(settings.markdown_code_font_scale, 0.86);
+  const markdownCodeLineHeight = cleanNumber(settings.markdown_code_line_height, 1.22);
+  const markdownFontFamily = typeof settings.markdown_font_family === "string" ? settings.markdown_font_family.trim() : "";
+  const markdownCodeFontFamily = typeof settings.markdown_code_font_family === "string" ? settings.markdown_code_font_family.trim() : "";
+  const markdownHighlightColor = typeof settings.markdown_highlight_color === "string" ? settings.markdown_highlight_color.trim() : "";
   settings.summary_figure_attachment_limit = Math.min(20, Math.max(0, Math.trunc(figureLimit)));
+  settings.summary_text_char_limit = Math.min(2000000, Math.max(0, Math.trunc(textLimit)));
+  settings.capture_image_scale = Math.min(6, Math.max(1, Math.round(captureScale * 10) / 10));
+  settings.markdown_default_font_size = Math.min(28, Math.max(11, Math.round(markdownFontSize)));
+  settings.markdown_line_height = Math.min(2.2, Math.max(1.1, Math.round(markdownLineHeight * 100) / 100));
+  settings.markdown_code_font_scale = Math.min(1.1, Math.max(0.7, Math.round(markdownCodeFontScale * 100) / 100));
+  settings.markdown_code_line_height = Math.min(1.8, Math.max(1, Math.round(markdownCodeLineHeight * 100) / 100));
+  settings.markdown_font_family = ["current", "Aptos", "Arial", "Cambria", "Georgia", "Segoe UI", "Times New Roman"].includes(markdownFontFamily)
+    ? markdownFontFamily
+    : "current";
+  settings.markdown_code_font_family = [
+    "Anonymous Pro",
+    "Consolas",
+    "DejaVu Sans Mono",
+    "Menlo",
+    "Monaco",
+    "Monaspace Argon",
+    "Monaspace Krypton",
+    "Monaspace Neon",
+    "Monaspace Radon",
+    "Monaspace Xenon",
+    "Source Code Pro",
+    "Space Mono",
+  ].includes(markdownCodeFontFamily) ? markdownCodeFontFamily : "Consolas";
+  settings.markdown_code_line_numbers = settings.markdown_code_line_numbers !== false;
+  settings.markdown_code_ligatures = settings.markdown_code_ligatures !== false;
+  settings.markdown_highlight_enabled = settings.markdown_highlight_enabled !== false;
+  settings.markdown_highlight_color = /^#[0-9a-f]{6}$/i.test(markdownHighlightColor) ? markdownHighlightColor : "#fff3bf";
+  settings.markdown_math_enabled = settings.markdown_math_enabled !== false;
+  settings.markdown_html_live_enabled = settings.markdown_html_live_enabled !== false;
+  if (settings.markdown_default_editor_mode !== "edit" && settings.markdown_default_editor_mode !== "preview") {
+    settings.markdown_default_editor_mode = "live";
+  }
+  settings.readerm_edit_split_default = settings.readerm_edit_split_default === true;
+  if (settings.readerm_preview_position !== "bottom") settings.readerm_preview_position = "right";
+  if (settings.history_readerp_link_view !== "markdown" && settings.history_readerp_link_view !== "summary") {
+    settings.history_readerp_link_view = "pdf";
+  }
   settings.ai_send_notes_context = settings.ai_send_notes_context !== false;
   settings.ai_send_summary_context = settings.ai_send_summary_context !== false;
   settings.ai_send_annotations_context = settings.ai_send_annotations_context !== false;
   settings.ai_send_loaded_pdf_text = settings.ai_send_loaded_pdf_text !== false;
   settings.ai_send_figure_attachments = settings.ai_send_figure_attachments !== false;
+  settings.simpletex_ocr_token = typeof settings.simpletex_ocr_token === "string" ? settings.simpletex_ocr_token.trim() : "";
+  settings.simpletex_ocr_enabled = settings.simpletex_ocr_enabled === true;
   return settings;
 }
 

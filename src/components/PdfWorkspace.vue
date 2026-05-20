@@ -61,6 +61,7 @@ const props = withDefaults(defineProps<{
   authorPreview: AuthorHoverPreview | null;
   dictionaryEntries: DictionaryEntry[];
   dictionaryPreview: DictionaryHoverPreview | null;
+  captureImageScale?: number;
   canRename?: boolean;
   canOpenAnnotations?: boolean;
   canTranslate?: boolean;
@@ -195,17 +196,17 @@ watch(() => props.searchOpen, focusSearchInput);
             <button type="button" :title="t('annotation.type.highlight')" :class="{ active: annotationToolMode === 'highlight' }" @click="emit('update:annotationToolMode', 'highlight')"><Highlighter :size="17" /></button>
             <button type="button" :title="t('annotation.type.underline')" :class="{ active: annotationToolMode === 'underline' }" @click="emit('update:annotationToolMode', 'underline')"><Underline :size="17" /></button>
             <button v-if="canOpenAnnotations !== false" type="button" :title="t('pdf.openAnnotations')" @click="emit('showAnnotations')"><ListChecks :size="17" /></button>
-            <ColorDropdown :model-value="annotationColor" :title="t('annotation.color')" @update:model-value="emit('update:annotationColor', $event)" />
-            <button type="button" :title="t('pdf.copyQuote')" :disabled="!hasSelection" @click="emit('quote')"><Quote :size="17" /></button>
-            <button type="button" :title="t('pdf.translateSelection')" :disabled="!hasSelection || canTranslate === false" @click="emit('translate')"><Languages :size="17" /></button>
-            <button type="button" :title="t('pdf.askAiSelection')" :disabled="!hasSelection || canAskAi === false" @click="emit('askAi')"><Bot :size="17" /></button>
+            <ColorDropdown class="pdf-toolbar-annotation-color" :model-value="annotationColor" :title="t('annotation.color')" @update:model-value="emit('update:annotationColor', $event)" />
+            <button type="button" class="pdf-toolbar-quote" :title="t('pdf.copyQuote')" :disabled="!hasSelection" @click="emit('quote')"><Quote :size="17" /></button>
+            <button type="button" class="pdf-toolbar-translate" :title="t('pdf.translateSelection')" :disabled="!hasSelection || canTranslate === false" @click="emit('translate')"><Languages :size="17" /></button>
+            <button type="button" class="pdf-toolbar-ask-ai" :title="t('pdf.askAiSelection')" :disabled="!hasSelection || canAskAi === false" @click="emit('askAi')"><Bot :size="17" /></button>
           </div>
         </div>
         <div class="toolbar-zone toolbar-zone-right">
           <div class="toolbar-group">
             <button type="button" :title="t('pdf.search')" :class="{ active: searchOpen }" @click="emit('toggleSearch')"><Search :size="17" /></button>
-            <button type="button" :title="t('pdf.currentPagePreview')" :disabled="canCurrentPagePreview === false" @click="emit('openCurrentPagePreview')"><PictureInPicture :size="17" /></button>
-            <button type="button" :title="t('pdf.deleteDocument')" :disabled="canDeleteDocument === false" @click="emit('deleteDocument')"><Trash2 :size="17" /></button>
+            <button type="button" class="pdf-toolbar-float-window" :title="t('pdf.currentPagePreview')" :disabled="canCurrentPagePreview === false" @click="emit('openCurrentPagePreview')"><PictureInPicture :size="17" /></button>
+            <button type="button" class="pdf-toolbar-delete" :title="t('pdf.deleteDocument')" :disabled="canDeleteDocument === false" @click="emit('deleteDocument')"><Trash2 :size="17" /></button>
           </div>
         </div>
       </div>
@@ -244,6 +245,7 @@ watch(() => props.searchOpen, focusSearchInput);
         :image-select-mode="annotationToolMode === 'image'"
         :author-profiles="authorProfiles"
         :dictionary-entries="dictionaryEntries"
+        :capture-image-scale="captureImageScale"
         :can-translate="canTranslate !== false"
         :can-ask-ai="canAskAi !== false"
         @selection="emit('selection', $event)"

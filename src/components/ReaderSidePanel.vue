@@ -22,10 +22,12 @@ import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import { readerPanelTabs, type RightPanelTab } from "@/components/ReaderPanelTabs";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
 import UiDropdown from "@/components/UiDropdown.vue";
+import { useMarkdownZoom } from "@/composables/useMarkdownZoom";
 import { useI18n } from "@/i18n";
+import { markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import { hasActiveAnnotationFilters, parseTagsInput, type AnnotationFilters } from "@/services/ReaderAnnotationService";
 import { displaySymbolText, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { Annotation, AnnotationType, MarkdownEditorMode, SymbolDefinition } from "@/types";
+import type { Annotation, AnnotationType, MarkdownEditorMode, Settings, SymbolDefinition } from "@/types";
 
 const props = defineProps<{
   activeTab: RightPanelTab;
@@ -47,6 +49,7 @@ const props = defineProps<{
   symbols: SymbolDefinition[];
   activeSymbol: string;
   symbolRefreshProgress: { status: string; percent?: number } | null;
+  settings?: Settings | null;
 }>();
 
 const { t } = useI18n();
@@ -62,7 +65,7 @@ const emit = defineEmits<{
   (event: "collapse"): void;
   (event: "saveNote"): void;
   (event: "saveSummary"): void;
-  (event: "insertImage", payload: { target: "notes" | "summary"; selection?: { start: number; end: number } }): void;
+  (event: "insertImage", payload: { target: "notes" | "summary"; selection?: { start: number; end: number }; kind?: "image" | "formula" }): void;
   (event: "pasteImage", payload: { target: "notes" | "summary"; dataUrl: string; selection?: { start: number; end: number } }): void;
   (event: "resizeImage", payload: { target: "notes" | "summary"; assetPath: string }): void;
   (event: "sendAi", value?: "chat" | "summary"): void;
@@ -70,12 +73,13 @@ const emit = defineEmits<{
   (event: "selectAnnotation", annotation: Annotation): void;
   (event: "updateAnnotation", payload: { annotation: Annotation; patch: { type?: AnnotationType; color?: string; comment?: string; tags?: string[] } }): void;
   (event: "deleteAnnotation", annotation: Annotation): void;
-  (event: "linkClick", payload: { href: string; event: MouseEvent }): void;
+  (event: "linkClick", payload: { href: string; event: MouseEvent; force?: boolean }): void;
   (event: "selectSymbol", symbol: SymbolDefinition): void;
   (event: "updateSymbol", symbol: SymbolDefinition): void;
   (event: "deleteSymbol", symbol: SymbolDefinition): void;
   (event: "setSymbolAnchor", symbol: SymbolDefinition): void;
   (event: "refreshSymbols"): void;
+  (event: "updateSettings", patch: Partial<Settings>): void;
 }>();
 
 const pageOptions = computed(() => {
@@ -124,6 +128,11 @@ const aiInputHasText = computed(() => Boolean(props.aiInput.trim()));
 const noteTextarea = ref<HTMLTextAreaElement | null>(null);
 const summaryTextarea = ref<HTMLTextAreaElement | null>(null);
 const aiTextarea = ref<HTMLTextAreaElement | null>(null);
+const { markdownFontSize, handleMarkdownWheel } = useMarkdownZoom();
+const markdownLineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const markdownCodeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
+const markdownCodeLineHeight = computed(() => props.settings?.markdown_code_line_height || 1.22);
+const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
 const editingSymbolKey = ref("");
 const symbolEditDraft = ref({ symbol: "", definition: "" });
 const draftSymbol = ref<SymbolDefinition | null>(null);
@@ -231,6 +240,26 @@ async function handleTextareaPaste(event: ClipboardEvent, target: "notes" | "sum
 function forwardLivePaste(target: "notes" | "summary", payload: { dataUrl: string; selection?: { start: number; end: number } }) {
   emit("pasteImage", { target, ...payload });
 }
+
+function currentMarkdownSelection(target: "notes" | "summary") {
+  if (props.activeTab !== target) return undefined;
+  const mode = target === "notes" ? props.notesMode : props.summaryMode;
+  const textarea = target === "notes" ? noteTextarea.value : summaryTextarea.value;
+  if (mode === "edit" && textarea) {
+    return { start: textarea.selectionStart, end: textarea.selectionEnd };
+  }
+  if (mode === "live") return liveSelections.value[target];
+  return undefined;
+}
+
+function currentNoteSelection() {
+  return currentMarkdownSelection("notes");
+}
+
+defineExpose({
+  currentMarkdownSelection,
+  currentNoteSelection,
+});
 
 function symbolLabelSource(symbol: SymbolDefinition) {
   const rawValue = symbol.symbol.trim();
@@ -390,7 +419,12 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
       </div>
     </section>
 
-    <section v-else-if="activeTab === 'notes'" class="panel-body">
+    <section
+      v-else-if="activeTab === 'notes'"
+      class="panel-body markdown-resize-scope"
+      :style="{ '--markdown-editor-font-size': `${markdownFontSize}px`, '--markdown-line-height': markdownLineHeight, '--markdown-code-font-family': markdownCodeFontFamilyCss, '--markdown-code-font-scale': markdownCodeFontScale, '--markdown-code-line-height': markdownCodeLineHeight }"
+      @wheel="handleMarkdownWheel"
+    >
       <div class="mode-tabs">
         <SegmentedModeSwitch :model-value="notesMode" @update:model-value="emit('update:notesMode', $event)" />
         <button type="button" :title="t('markdown.captureRegion')" @click="requestInsertImage('notes')"><ImagePlus :size="16" /></button>
@@ -404,11 +438,16 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
         @input="emit('update:noteDraft', ($event.target as HTMLTextAreaElement).value)"
         @paste="handleTextareaPaste($event, 'notes')"
       />
-      <LiveMarkdownEditor v-else-if="notesMode === 'live'" :model-value="noteDraft" :document-id="documentId" @update:model-value="emit('update:noteDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('notes', $event)" @image-insert="emit('insertImage', { target: 'notes', selection: $event.selection })" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" @selection-change="liveSelections.notes = $event" />
-      <MarkdownPreview v-else :source="noteDraft || t('markdown.noNotes')" :document-id="documentId" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" />
+      <LiveMarkdownEditor v-else-if="notesMode === 'live'" :model-value="noteDraft" :document-id="documentId" :font-size="markdownFontSize" :settings="settings" @update:model-value="emit('update:noteDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('notes', $event)" @image-insert="emit('insertImage', { target: 'notes', selection: $event.selection, kind: $event.kind })" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" @update-settings="emit('updateSettings', $event)" @selection-change="liveSelections.notes = $event" />
+      <MarkdownPreview v-else :source="noteDraft || t('markdown.noNotes')" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" />
     </section>
 
-    <section v-else-if="activeTab === 'summary'" class="panel-body">
+    <section
+      v-else-if="activeTab === 'summary'"
+      class="panel-body markdown-resize-scope"
+      :style="{ '--markdown-editor-font-size': `${markdownFontSize}px`, '--markdown-line-height': markdownLineHeight, '--markdown-code-font-family': markdownCodeFontFamilyCss, '--markdown-code-font-scale': markdownCodeFontScale, '--markdown-code-line-height': markdownCodeLineHeight }"
+      @wheel="handleMarkdownWheel"
+    >
       <div class="mode-tabs">
         <SegmentedModeSwitch :model-value="summaryMode" @update:model-value="emit('update:summaryMode', $event)" />
         <button type="button" :title="t('markdown.captureRegion')" @click="requestInsertImage('summary')"><ImagePlus :size="16" /></button>
@@ -422,13 +461,14 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
         @input="emit('update:summaryDraft', ($event.target as HTMLTextAreaElement).value)"
         @paste="handleTextareaPaste($event, 'summary')"
       />
-      <LiveMarkdownEditor v-else-if="summaryMode === 'live'" :model-value="summaryDraft" :document-id="documentId" @update:model-value="emit('update:summaryDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('summary', $event)" @image-insert="emit('insertImage', { target: 'summary', selection: $event.selection })" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" @selection-change="liveSelections.summary = $event" />
+      <LiveMarkdownEditor v-else-if="summaryMode === 'live'" :model-value="summaryDraft" :document-id="documentId" :font-size="markdownFontSize" :settings="settings" @update:model-value="emit('update:summaryDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('summary', $event)" @image-insert="emit('insertImage', { target: 'summary', selection: $event.selection, kind: $event.kind })" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" @update-settings="emit('updateSettings', $event)" @selection-change="liveSelections.summary = $event" />
       <div v-else-if="summaryIsEmpty" class="empty-summary">
         <p>{{ t("summary.empty") }}</p>
+      </div>
+      <MarkdownPreview v-else :source="summaryDraft" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" />
+      <div class="summary-ai-action-region">
         <button type="button" class="secondary ai-summary-button" :disabled="aiLoading" @click="emit('sendAi', 'summary')"><Bot :size="16" /> {{ summaryActionLabel }}</button>
       </div>
-      <MarkdownPreview v-else :source="summaryDraft" :document-id="documentId" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" />
-      <button v-if="summaryMode === 'edit' || !summaryIsEmpty" type="button" class="secondary ai-summary-button" :disabled="aiLoading" @click="emit('sendAi', 'summary')"><Bot :size="16" /> {{ summaryActionLabel }}</button>
     </section>
 
     <section v-else-if="activeTab === 'symbols'" class="panel-body symbol-list">
@@ -453,8 +493,8 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
         <div class="symbol-filter-bar">
           <div class="symbol-segmented-filter" role="group" :aria-label="t('symbol.kindFilter')">
             <button type="button" :class="{ active: symbolKindFilter === 'all' }" @click="symbolKindFilter = 'all'">{{ t("symbol.filter.all") }}</button>
-            <button type="button" :class="{ active: symbolKindFilter === 'symbol' }" @click="symbolKindFilter = 'symbol'">symbol</button>
-            <button type="button" :class="{ active: symbolKindFilter === 'abbreviation' }" @click="symbolKindFilter = 'abbreviation'">abbreviation</button>
+            <button type="button" :class="{ active: symbolKindFilter === 'symbol' }" @click="symbolKindFilter = 'symbol'">{{ t("symbol.kind.symbol") }}</button>
+            <button type="button" :class="{ active: symbolKindFilter === 'abbreviation' }" @click="symbolKindFilter = 'abbreviation'">{{ t("symbol.kind.abbreviation") }}</button>
           </div>
           <div class="symbol-segmented-filter" role="group" :aria-label="t('symbol.favoriteFilter')">
             <button type="button" :class="{ active: symbolFavoriteFilter === 'all' }" @click="symbolFavoriteFilter = 'all'">{{ t("symbol.filter.all") }}</button>
@@ -477,18 +517,18 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
             class="symbol-card-symbol-input"
             @click.stop
           />
-          <MarkdownPreview v-else class="symbol-card-symbol" :source="symbolLabelSource(symbol)" />
+          <MarkdownPreview v-else class="symbol-card-symbol" :source="symbolLabelSource(symbol)" :settings="settings" />
           <span class="symbol-card-meta">{{ symbol.kind }} · {{ symbol.source }}<template v-if="symbol.page_index !== undefined"> · p. {{ symbol.page_index + 1 }}</template></span>
           <div class="symbol-card-actions" @click.stop>
             <template v-if="editingSymbolKey === symbolKey(symbol)">
-              <button type="button" title="保存" @click="saveSymbolEdit(symbol)"><Check :size="15" /></button>
-              <button type="button" title="取消" @click="cancelSymbolEdit"><X :size="15" /></button>
+              <button type="button" :title="t('common.save')" @click="saveSymbolEdit(symbol)"><Check :size="15" /></button>
+              <button type="button" :title="t('common.cancel')" @click="cancelSymbolEdit"><X :size="15" /></button>
             </template>
             <template v-else>
               <button type="button" :class="{ active: symbol.favorite }" :title="symbol.favorite ? t('symbol.unfavorite') : t('symbol.favorite')" @click="toggleSymbolFavorite(symbol)"><Star :size="15" /></button>
               <button type="button" :class="{ active: symbol.page_index !== undefined }" :title="t('symbol.setAnchor')" @click="emit('setSymbolAnchor', symbol)"><MapPin :size="15" /></button>
-              <button type="button" title="编辑" @click="startSymbolEdit(symbol)"><Pencil :size="15" /></button>
-              <button type="button" title="删除" @click="emit('deleteSymbol', symbol)"><Trash2 :size="15" /></button>
+              <button type="button" :title="t('common.edit')" @click="startSymbolEdit(symbol)"><Pencil :size="15" /></button>
+              <button type="button" :title="t('common.delete')" @click="emit('deleteSymbol', symbol)"><Trash2 :size="15" /></button>
             </template>
           </div>
         </div>
@@ -498,7 +538,7 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
           class="symbol-card-definition-input"
           @click.stop
         />
-        <MarkdownPreview v-else class="symbol-card-definition" :source="symbol.definition" :document-id="documentId" @link-click="emit('linkClick', $event)" />
+        <MarkdownPreview v-else class="symbol-card-definition" :source="symbol.definition" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
       </article>
       <div v-if="!filteredSymbols.length" class="empty-state">
         {{ symbols.length ? t("symbol.emptyFiltered") : t("symbol.empty") }}
@@ -508,7 +548,7 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
     <section v-else class="panel-body ai-tab">
       <div class="ai-messages">
         <article v-for="(message, index) in aiMessages" :key="index" :class="['ai-message', message.role]">
-          <MarkdownPreview :source="message.content" :document-id="documentId" @link-click="emit('linkClick', $event)" />
+          <MarkdownPreview :source="message.content" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
         </article>
       </div>
       <div class="ai-composer">

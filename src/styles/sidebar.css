@@ -1,4 +1,6 @@
 .library {
+  position: relative;
+  z-index: 1;
   width: 280px;
   border-right: 1px solid var(--color-border);
   background: var(--color-paper);
@@ -25,7 +27,7 @@
 }
 
 .brand strong {
-  color: var(--color-text);
+  color: var(--color-primary);
   font-size: 15px;
   font-weight: 760;
 }
@@ -80,6 +82,12 @@
   padding: 0 10px;
   font-size: 13px;
   font-weight: 650;
+}
+
+.sidebar-import-actions .icon-only {
+  width: 30px;
+  padding: 0;
+  margin-left: auto;
 }
 
 .library-search {
@@ -153,7 +161,7 @@
   border: 1px solid transparent;
   background: transparent;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 32px 32px;
   align-items: center;
   gap: 4px;
   min-height: 58px;
@@ -174,6 +182,7 @@
   padding: 10px 11px;
 }
 
+.library-item-link,
 .library-item-delete {
   width: 28px;
   height: 28px;
@@ -286,9 +295,18 @@
   border-color: #c7d7fb;
 }
 
+.library-item:hover .library-item-link,
+.library-item:focus-within .library-item-link,
 .library-item:hover .library-item-delete,
 .library-item:focus-within .library-item-delete {
   opacity: 1;
+}
+
+.library-item-link:hover,
+.library-item-link:focus-visible {
+  color: var(--color-primary);
+  background: #eef5ff;
+  border-color: #bcd0ee;
 }
 
 .library-item-delete:hover,

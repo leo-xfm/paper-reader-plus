@@ -1,20 +1,31 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { dialog, ipcMain } from "electron";
 import { createReaderPackageBuffer, readReaderPackageBuffer } from "../ReaderPackageService.js";
+import { dialogLabel } from "../i18n.js";
 import { normalizeMarkdownAssetPath } from "../services/AssetService.js";
 import type { StoredAnchor, StoredAnnotation } from "../storeMigration.js";
 import type { DbDocument, IpcContext } from "./storeContext.js";
 
+async function fileSize(filePath: string) {
+  return (await stat(filePath)).size;
+}
+
 async function confirmExportAnchors(ctx: IpcContext) {
+  const language = ctx.getSettings().ui_language;
   const result = await dialog.showMessageBox(ctx.window, {
     type: "question",
-    buttons: ["Keep anchors", "Remove anchors", "Cancel"],
+    buttons: [
+      dialogLabel(language, "button.keepAnchors"),
+      dialogLabel(language, "button.removeAnchors"),
+      dialogLabel(language, "button.cancel"),
+    ],
     defaultId: 0,
     cancelId: 2,
-    message: "Export anchors?",
-    detail: "Choose whether this exported package should include reader anchors and annotations. Removing anchors does not change local data.",
+    message: dialogLabel(language, "dialog.exportAnchors.message"),
+    detail: dialogLabel(language, "dialog.exportAnchors.detail"),
   });
   if (result.response === 0) return true;
   if (result.response === 1) return false;
@@ -33,9 +44,9 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     });
     if (result.canceled || !result.filePath) return null;
     const pdfData = existsSync(document.file_path) && document.source_type !== "markdown"
-      ? readFileSync(document.file_path)
+      ? await readFile(document.file_path)
       : undefined;
-    const latexData = document.latex_path && existsSync(document.latex_path) ? readFileSync(document.latex_path) : undefined;
+    const latexData = document.latex_path && existsSync(document.latex_path) ? await readFile(document.latex_path) : undefined;
     const buffer = await createReaderPackageBuffer({
       document,
       note: ctx.store.notes[documentId]?.content || "",
@@ -46,15 +57,16 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
       symbols: ctx.store.symbols[documentId] || [],
       pdfData,
       latexData,
-      assets: ctx.packageAssetsForDocument(
+      assets: await ctx.packageAssetsForDocumentAsync(
         documentId,
         ctx.store.notes[documentId]?.content || "",
         ctx.store.summaries[documentId]?.content || "",
         aiHistory.map((message) => message.content).join("\n"),
       ),
     });
-    writeFileSync(result.filePath, buffer);
+    await writeFile(result.filePath, buffer);
     document.readerp_path = result.filePath;
+    document.file_name = basename(result.filePath);
     ctx.store.ai_history[documentId] = aiHistory;
     ctx.saveStore();
     return result.filePath;
@@ -85,14 +97,15 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     ctx.store.ai_history[documentId] = aiHistory;
     document.updated_at = timestamp;
     document.readerp_path = targetPath;
+    document.file_name = basename(targetPath);
 
     const noteContent = ctx.store.notes[documentId]?.content || "";
     const summaryContent = ctx.store.summaries[documentId]?.content || "";
     const aiText = aiHistory.map((message) => message.content).join("\n");
     const pdfData = existsSync(document.file_path) && document.source_type !== "markdown"
-      ? readFileSync(document.file_path)
+      ? await readFile(document.file_path)
       : undefined;
-    const latexData = document.latex_path && existsSync(document.latex_path) ? readFileSync(document.latex_path) : undefined;
+    const latexData = document.latex_path && existsSync(document.latex_path) ? await readFile(document.latex_path) : undefined;
     const buffer = await createReaderPackageBuffer({
       document,
       note: noteContent,
@@ -103,9 +116,9 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
       symbols: ctx.store.symbols[documentId] || [],
       pdfData,
       latexData,
-      assets: ctx.packageAssetsForDocument(documentId, noteContent, summaryContent, aiText),
+      assets: await ctx.packageAssetsForDocumentAsync(documentId, noteContent, summaryContent, aiText),
     });
-    writeFileSync(targetPath, buffer);
+    await writeFile(targetPath, buffer);
     ctx.saveStore();
     return targetPath;
   });
@@ -126,10 +139,10 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     const latexDataByDocumentId: Record<string, Buffer> = {};
     for (const item of documents) {
       if (item.source_type !== "markdown" && existsSync(item.file_path)) {
-        pdfDataByDocumentId[item.document_id] = readFileSync(item.file_path);
+        pdfDataByDocumentId[item.document_id] = await readFile(item.file_path);
       }
       if (item.latex_path && existsSync(item.latex_path)) {
-        latexDataByDocumentId[item.document_id] = readFileSync(item.latex_path);
+        latexDataByDocumentId[item.document_id] = await readFile(item.latex_path);
       }
     }
     const anchors = keepAnchors ? ctx.store.anchors.filter((anchor) => referencedIds.has(anchor.document_id)) : [];
@@ -148,7 +161,7 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
       symbols,
       pdfDataByDocumentId,
       latexDataByDocumentId,
-      assets: ctx.packageAssetsForDocument(documentId, note, summary, aiText),
+      assets: await ctx.packageAssetsForDocumentAsync(documentId, note, summary, aiText),
     });
     ctx.saveStore();
     return result;
@@ -164,16 +177,16 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     const targetDir = result.filePaths[0];
     const baseName = (document.title || "paper").replace(/[<>:"/\\|?*]+/g, "_");
     if (existsSync(document.file_path) && document.source_type !== "markdown") {
-      writeFileSync(join(targetDir, `${baseName}.pdf`), readFileSync(document.file_path));
+      await writeFile(join(targetDir, `${baseName}.pdf`), await readFile(document.file_path));
     }
     if (document.latex_path && existsSync(document.latex_path)) {
-      writeFileSync(join(targetDir, `${baseName}.tex`), readFileSync(document.latex_path));
+      await writeFile(join(targetDir, `${baseName}.tex`), await readFile(document.latex_path));
     }
-    writeFileSync(join(targetDir, `${baseName}.notes.md`), ctx.store.notes[documentId]?.content || "", "utf8");
-    writeFileSync(join(targetDir, `${baseName}.summary.md`), ctx.store.summaries[documentId]?.content || "", "utf8");
-    writeFileSync(join(targetDir, `${baseName}.ai-history.json`), JSON.stringify(aiHistory, null, 2), "utf8");
-    writeFileSync(join(targetDir, `${baseName}.symbols.json`), JSON.stringify(ctx.store.symbols[documentId] || [], null, 2), "utf8");
-    const splitAssets = ctx.packageAssetsForDocument(
+    await writeFile(join(targetDir, `${baseName}.notes.md`), ctx.store.notes[documentId]?.content || "", "utf8");
+    await writeFile(join(targetDir, `${baseName}.summary.md`), ctx.store.summaries[documentId]?.content || "", "utf8");
+    await writeFile(join(targetDir, `${baseName}.ai-history.json`), JSON.stringify(aiHistory, null, 2), "utf8");
+    await writeFile(join(targetDir, `${baseName}.symbols.json`), JSON.stringify(ctx.store.symbols[documentId] || [], null, 2), "utf8");
+    const splitAssets = await ctx.packageAssetsForDocumentAsync(
       documentId,
       ctx.store.notes[documentId]?.content || "",
       ctx.store.summaries[documentId]?.content || "",
@@ -181,11 +194,11 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     );
     if (splitAssets.length) {
       const splitAssetsDir = join(targetDir, "assets");
-      mkdirSync(splitAssetsDir, { recursive: true });
+      await mkdir(splitAssetsDir, { recursive: true });
       for (const asset of splitAssets) {
-        writeFileSync(join(splitAssetsDir, asset.file_name), asset.data);
+        await writeFile(join(splitAssetsDir, asset.file_name), asset.data);
       }
-      writeFileSync(join(splitAssetsDir, "assets.json"), JSON.stringify(splitAssets.map((asset) => ({
+      await writeFile(join(splitAssetsDir, "assets.json"), JSON.stringify(splitAssets.map((asset) => ({
         asset_id: asset.asset_id,
         document_id: asset.document_id,
         file_name: asset.file_name,
@@ -208,23 +221,23 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const source = result.filePaths[0];
-    const packageData = await readReaderPackageBuffer(readFileSync(source));
+    const packageData = await readReaderPackageBuffer(await readFile(source));
     const timestamp = ctx.now();
     const id = packageData.packageMode === "markdown-centered" ? packageData.document.document_id : randomUUID();
     const target = packageData.pdfData ? join(ctx.libraryDir, `${id}.pdf`) : join(ctx.libraryDir, `${id}.md`);
     if (packageData.pdfData) {
-      writeFileSync(target, packageData.pdfData);
+      await writeFile(target, packageData.pdfData);
     } else {
-      writeFileSync(target, packageData.note || packageData.summary || "", "utf8");
+      await writeFile(target, packageData.note || packageData.summary || "", "utf8");
     }
     const latexTarget = packageData.latexData ? ctx.latexTargetPath(id) : undefined;
-    if (packageData.latexData && latexTarget) writeFileSync(latexTarget, packageData.latexData);
+    if (packageData.latexData && latexTarget) await writeFile(latexTarget, packageData.latexData);
     const document: DbDocument = {
       document_id: id,
       title: packageData.manifest.title || basename(source, extname(source)),
-      file_name: packageData.manifest.file_name || basename(source),
+      file_name: basename(source),
       file_path: target,
-      file_size: statSync(target).size,
+      file_size: await fileSize(target),
       source_type: packageData.pdfData ? "readerp" : "markdown",
       readerp_path: source,
       latex_path: latexTarget,
@@ -240,13 +253,13 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
         const filePath = pdfData ? join(ctx.libraryDir, `${packageDocument.document_id}.pdf`) : join(ctx.libraryDir, `${packageDocument.document_id}.md`);
         const latexData = packageData.latexDataByDocumentId[packageDocument.document_id];
         const packageLatexTarget = latexData ? ctx.latexTargetPath(packageDocument.document_id) : undefined;
-        if (pdfData) writeFileSync(filePath, pdfData);
-        else writeFileSync(filePath, "", "utf8");
-        if (latexData && packageLatexTarget) writeFileSync(packageLatexTarget, latexData);
+        if (pdfData) await writeFile(filePath, pdfData);
+        else await writeFile(filePath, "", "utf8");
+        if (latexData && packageLatexTarget) await writeFile(packageLatexTarget, latexData);
         ctx.store.documents.push({
           ...packageDocument,
           file_path: filePath,
-          file_size: existsSync(filePath) ? statSync(filePath).size : packageDocument.file_size,
+          file_size: existsSync(filePath) ? await fileSize(filePath) : packageDocument.file_size,
           source_type: pdfData ? "readerp" : packageDocument.source_type,
           readerp_path: source,
           latex_path: packageLatexTarget,
@@ -258,7 +271,7 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     ctx.store.ai_history[id] = packageData.aiHistory;
     ctx.store.symbols[id] = (packageData.symbols || []) as typeof ctx.store.symbols[string];
     for (const asset of packageData.assets) {
-      ctx.createAssetRecord(
+      await ctx.createAssetRecordAsync(
         id,
         basename(normalizeMarkdownAssetPath(`assets/${asset.file_name}`)),
         asset.mime_type,
@@ -284,14 +297,15 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     const originalName = basename(source);
     const title = originalName.replace(new RegExp(`${extname(originalName)}$`), "");
     const target = join(ctx.libraryDir, `${id}.pdf`);
-    writeFileSync(target, readFileSync(source));
+    const pdfData = await readFile(source);
+    await writeFile(target, pdfData);
     const timestamp = ctx.now();
     const document: DbDocument = {
       document_id: id,
       title,
       file_name: originalName,
       file_path: target,
-      file_size: statSync(target).size,
+      file_size: await fileSize(target),
       source_type: "pdf",
       created_at: timestamp,
       updated_at: timestamp,
@@ -310,7 +324,7 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
       anchors: [],
       annotations: [],
       symbols: [],
-      pdfData: readFileSync(target),
+      pdfData,
     });
     ctx.saveStore();
     return document;
@@ -327,16 +341,16 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     const id = randomUUID();
     const originalName = basename(source);
     const title = originalName.replace(new RegExp(`${extname(originalName)}$`), "");
-    const markdown = readFileSync(source, "utf8");
+    const markdown = await readFile(source, "utf8");
     const target = join(ctx.libraryDir, `${id}.md`);
-    writeFileSync(target, markdown, "utf8");
+    await writeFile(target, markdown, "utf8");
     const timestamp = ctx.now();
     const document: DbDocument = {
       document_id: id,
       title,
       file_name: originalName,
       file_path: target,
-      file_size: statSync(target).size,
+      file_size: await fileSize(target),
       source_type: "markdown",
       created_at: timestamp,
       updated_at: timestamp,

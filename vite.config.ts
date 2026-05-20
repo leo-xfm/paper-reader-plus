@@ -24,9 +24,10 @@ export default defineConfig({
             normalizedId.includes("/node_modules/pinia/")
           ) return "vendor-vue";
           if (normalizedId.includes("/node_modules/pdfjs-dist/")) return "vendor-pdf";
+          if (normalizedId.includes("/node_modules/mermaid/")) return "vendor-mermaid";
+          if (normalizedId.includes("/node_modules/katex/")) return "vendor-math";
           if (
             normalizedId.includes("/node_modules/markdown-it/") ||
-            normalizedId.includes("/node_modules/katex/") ||
             normalizedId.includes("/node_modules/entities/") ||
             normalizedId.includes("/node_modules/linkify-it/") ||
             normalizedId.includes("/node_modules/mdurl/") ||
@@ -34,10 +35,12 @@ export default defineConfig({
             normalizedId.includes("/node_modules/argparse/")
           ) return "vendor-markdown";
           if (
-            normalizedId.includes("/node_modules/prosemirror-") ||
-            normalizedId.includes("/node_modules/orderedmap/") ||
-            normalizedId.includes("/node_modules/w3c-keyname/") ||
-            normalizedId.includes("/node_modules/rope-sequence/")
+            normalizedId.includes("/node_modules/@codemirror/") ||
+            normalizedId.includes("/node_modules/codemirror/") ||
+            normalizedId.includes("/node_modules/@lezer/") ||
+            normalizedId.includes("/node_modules/crelt/") ||
+            normalizedId.includes("/node_modules/style-mod/") ||
+            normalizedId.includes("/node_modules/w3c-keyname/")
           ) return "vendor-editor";
           if (normalizedId.includes("/node_modules/lucide-vue-next/")) return "vendor-icons";
           if (
@@ -46,7 +49,7 @@ export default defineConfig({
             normalizedId.includes("/node_modules/readable-stream/") ||
             normalizedId.includes("/node_modules/setimmediate/")
           ) return "vendor-utils";
-          return "vendor-utils";
+          return undefined;
         },
       },
     },

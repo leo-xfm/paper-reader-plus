@@ -24,7 +24,7 @@
 .selection-toolbar button.active {
   background: #edf4ff;
   border-color: #88aee6;
-  color: #1f6feb;
+  color: #377e9a;
 }
 
 .selection-toolbar-main {
@@ -125,7 +125,7 @@
 
 .annotation-comment-type button.active {
   background: #edf4ff;
-  color: #1f6feb;
+  color: #377e9a;
 }
 
 .annotation-comment-colors {

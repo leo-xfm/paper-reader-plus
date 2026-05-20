@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import UiDropdown from "@/components/UiDropdown.vue";
 import { useI18n } from "@/i18n";
-import type { FileAssociationStatus, PromptTemplateStatus, Settings } from "@/types";
+import { markdownCodeFontOptions, markdownFontOptions } from "@/services/MarkdownFontOptionsService";
+import type { FileAssociationExtension, FileAssociationStatus, PromptTemplateStatus, Settings } from "@/types";
 
-export type SettingsPanel = "agent-api" | "translation-api" | "network-proxy" | "file-associations" | "system-prompt" | "summary-prompt";
+export type SettingsPanel = "general" | "markdown" | "agent-api" | "ocr-api" | "translation-api" | "file-associations" | "system-prompt" | "summary-prompt";
 
 defineProps<{
   panel: SettingsPanel;
   settings: Settings;
   promptTemplatePreview: Array<PromptTemplateStatus & { preview: string }>;
-  testing: "agent" | "translation" | null;
+  testing: "agent" | "translation" | "simpletex" | null;
   fileAssociationStatus: FileAssociationStatus | null;
-  fileAssociationBusy: boolean;
+  fileAssociationBusy: FileAssociationExtension | "all" | null;
 }>();
 
 const { t } = useI18n();
@@ -21,20 +22,23 @@ const emit = defineEmits<{
   (event: "save"): void;
   (event: "testAgent"): void;
   (event: "testTranslation"): void;
+  (event: "testSimpleTexOcr"): void;
   (event: "registerFileAssociations"): void;
+  (event: "updateFileAssociation", extension: FileAssociationExtension, associated: boolean): void;
 }>();
 </script>
 
 <template>
   <div class="modal-backdrop">
-    <section v-if="panel === 'agent-api'" class="modal settings-modal">
+    <section v-if="panel === 'general'" class="modal settings-modal">
       <header class="settings-modal-header">
-        <h2>{{ t("settings.agentApi") }}</h2>
-        <p class="modal-meta">{{ t("settings.agentDescription") }}</p>
+        <h2>{{ t("settings.general") }}</h2>
+        <p class="modal-meta">{{ t("settings.generalDescription") }}</p>
       </header>
-      <div class="settings-grid">
-        <label>
-          {{ t("settings.interfaceLanguage") }}
+      <div class="settings-general-list">
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.interfaceLanguage") }}</span>
+          <small>{{ t("settings.interfaceLanguageDescription") }}</small>
           <UiDropdown
             v-model="settings.ui_language"
             :title="t('settings.interfaceLanguage')"
@@ -45,6 +49,179 @@ const emit = defineEmits<{
             ]"
           />
         </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.captureImageScale") }}</span>
+          <small>{{ t("settings.captureImageScaleDescription") }}</small>
+          <input v-model.number="settings.capture_image_scale" type="number" min="1" max="6" step="0.5" />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.networkProxy") }}</span>
+          <small>{{ t("settings.networkProxyDescription") }}</small>
+          <span class="settings-checkbox">
+            <input v-model="settings.network_proxy_enabled" type="checkbox" />
+            <span>{{ t("settings.enableProxy") }}</span>
+          </span>
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.proxyUrl") }}</span>
+          <small>{{ t("settings.proxyUrlDescription") }}</small>
+          <input v-model="settings.network_proxy_url" placeholder="http://127.0.0.1:8888" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
+      </div>
+    </section>
+
+    <section v-else-if="panel === 'markdown'" class="modal settings-modal">
+      <header class="settings-modal-header">
+        <h2>{{ t("settings.markdown") }}</h2>
+        <p class="modal-meta">{{ t("settings.markdownDescription") }}</p>
+      </header>
+      <div class="settings-general-list">
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownDefaultFontSize") }}</span>
+          <small>{{ t("settings.markdownDefaultFontSizeDescription") }}</small>
+          <input v-model.number="settings.markdown_default_font_size" type="number" min="11" max="28" step="1" />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownLineHeight") }}</span>
+          <small>{{ t("settings.markdownLineHeightDescription") }}</small>
+          <input v-model.number="settings.markdown_line_height" type="number" min="1.1" max="2.2" step="0.05" />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownCodeFontScale") }}</span>
+          <small>{{ t("settings.markdownCodeFontScaleDescription") }}</small>
+          <input v-model.number="settings.markdown_code_font_scale" type="number" min="0.7" max="1.1" step="0.01" />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownCodeLineHeight") }}</span>
+          <small>{{ t("settings.markdownCodeLineHeightDescription") }}</small>
+          <input v-model.number="settings.markdown_code_line_height" type="number" min="1" max="1.8" step="0.02" />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownFontFamily") }}</span>
+          <small>{{ t("settings.markdownFontFamilyDescription") }}</small>
+          <UiDropdown
+            v-model="settings.markdown_font_family"
+            :title="t('settings.markdownFontFamily')"
+            :options="markdownFontOptions"
+          />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownCodeFontFamily") }}</span>
+          <small>{{ t("settings.markdownCodeFontFamilyDescription") }}</small>
+          <UiDropdown
+            v-model="settings.markdown_code_font_family"
+            :title="t('settings.markdownCodeFontFamily')"
+            :options="markdownCodeFontOptions"
+          />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownDefaultEditorMode") }}</span>
+          <small>{{ t("settings.markdownDefaultEditorModeDescription") }}</small>
+          <UiDropdown
+            v-model="settings.markdown_default_editor_mode"
+            :title="t('settings.markdownDefaultEditorMode')"
+            :options="[
+              { value: 'edit', label: t('common.edit') },
+              { value: 'live', label: t('common.live') },
+              { value: 'preview', label: t('common.preview') },
+            ]"
+          />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.readermEditSplitDefault") }}</span>
+          <small>{{ t("settings.readermEditSplitDefaultDescription") }}</small>
+          <span class="settings-checkbox">
+            <input v-model="settings.readerm_edit_split_default" type="checkbox" />
+            <span>{{ t("settings.readermEditSplitDefaultToggle") }}</span>
+          </span>
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.readermPreviewPosition") }}</span>
+          <small>{{ t("settings.readermPreviewPositionDescription") }}</small>
+          <UiDropdown
+            v-model="settings.readerm_preview_position"
+            :title="t('settings.readermPreviewPosition')"
+            :options="[
+              { value: 'right', label: t('settings.readermPreviewRight') },
+              { value: 'bottom', label: t('settings.readermPreviewBottom') },
+            ]"
+          />
+        </label>
+        <div class="settings-general-section">
+          <h3>{{ t("settings.markdownRendering") }}</h3>
+          <label class="settings-checkbox">
+            <input v-model="settings.markdown_code_line_numbers" type="checkbox" />
+            <span>{{ t("settings.markdownCodeLineNumbers") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.markdown_code_ligatures" type="checkbox" />
+            <span>{{ t("settings.markdownCodeLigatures") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.markdown_highlight_enabled" type="checkbox" />
+            <span>{{ t("settings.markdownHighlightSyntax") }}</span>
+          </label>
+          <label class="settings-color-row">
+            <span>{{ t("settings.markdownHighlightColor") }}</span>
+            <input v-model="settings.markdown_highlight_color" type="color" />
+            <input v-model="settings.markdown_highlight_color" pattern="#[0-9a-fA-F]{6}" placeholder="#fff3bf" />
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.markdown_math_enabled" type="checkbox" />
+            <span>{{ t("settings.markdownMathRendering") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.markdown_html_live_enabled" type="checkbox" />
+            <span>{{ t("settings.markdownHtmlLiveRendering") }}</span>
+          </label>
+        </div>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.historyReaderpLinkView") }}</span>
+          <small>{{ t("settings.historyReaderpLinkViewDescription") }}</small>
+          <UiDropdown
+            v-model="settings.history_readerp_link_view"
+            :title="t('settings.historyReaderpLinkView')"
+            :options="[
+              { value: 'pdf', label: t('readerm.sourcePdf') },
+              { value: 'markdown', label: t('readerm.sourceMarkdown') },
+              { value: 'summary', label: t('readerm.sourceSummary') },
+            ]"
+          />
+        </label>
+        <div class="settings-general-section">
+          <h3>{{ t("settings.defaultQuoteFormats") }}</h3>
+          <small>{{ t("settings.defaultQuoteFormatDescription") }}</small>
+          <label class="settings-general-item quote-template-editor">
+            <span class="settings-general-title">{{ t("settings.copyQuoteFormat") }}</span>
+            <textarea v-model="settings.copy_quote_template" rows="5" spellcheck="false" />
+          </label>
+          <label class="settings-general-item quote-template-editor">
+            <span class="settings-general-title">{{ t("settings.quoteToNoteFormat") }}</span>
+            <textarea v-model="settings.quote_to_note_template" rows="3" spellcheck="false" />
+          </label>
+          <label class="settings-general-item quote-template-editor">
+            <span class="settings-general-title">{{ t("settings.quoteToReadermFormat") }}</span>
+            <textarea v-model="settings.quote_to_readerm_template" rows="3" spellcheck="false" />
+          </label>
+          <small>{{ t("settings.defaultQuoteFormatVariables") }}</small>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
+      </div>
+    </section>
+
+    <section v-else-if="panel === 'agent-api'" class="modal settings-modal">
+      <header class="settings-modal-header">
+        <h2>{{ t("settings.agentApi") }}</h2>
+        <p class="modal-meta">{{ t("settings.agentDescription") }}</p>
+      </header>
+      <div class="settings-grid">
         <label>
           {{ t("settings.provider") }}
           <UiDropdown v-model="settings.agent_provider" :title="t('settings.provider')" :options="[{ value: 'volcengine', label: 'Volcengine Ark' }]" />
@@ -83,6 +260,25 @@ const emit = defineEmits<{
       <div class="modal-actions">
         <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
         <button type="button" :disabled="testing === 'agent'" @click="emit('testAgent')">{{ testing === "agent" ? t("settings.testing") : t("settings.testAgent") }}</button>
+        <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
+      </div>
+    </section>
+
+    <section v-else-if="panel === 'ocr-api'" class="modal settings-modal">
+      <header class="settings-modal-header">
+        <h2>{{ t("settings.ocrApi") }}</h2>
+        <p class="modal-meta">{{ t("settings.ocrDescription") }}</p>
+      </header>
+      <div class="settings-grid">
+        <label>
+          {{ t("settings.provider") }}
+          <input value="SimpleTex OCR" readonly />
+        </label>
+        <label class="settings-grid-wide">{{ t("settings.simpletexOcrToken") }}<input v-model="settings.simpletex_ocr_token" type="password" /></label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" :disabled="testing === 'simpletex'" @click="emit('testSimpleTexOcr')">{{ testing === "simpletex" ? t("settings.testing") : t("settings.testSimpleTexOcr") }}</button>
         <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
       </div>
     </section>
@@ -134,27 +330,6 @@ const emit = defineEmits<{
       </div>
     </section>
 
-    <section v-else-if="panel === 'network-proxy'" class="modal settings-modal">
-      <header class="settings-modal-header">
-        <h2>{{ t("settings.networkProxy") }}</h2>
-        <p class="modal-meta">{{ t("settings.networkProxyDescription") }}</p>
-      </header>
-      <div class="settings-grid">
-        <label class="settings-checkbox settings-grid-wide">
-          <input v-model="settings.network_proxy_enabled" type="checkbox" />
-          <span>{{ t("settings.enableProxy") }}</span>
-        </label>
-        <label class="settings-grid-wide">
-          {{ t("settings.proxyUrl") }}
-          <input v-model="settings.network_proxy_url" placeholder="http://127.0.0.1:7890" />
-        </label>
-      </div>
-      <div class="modal-actions">
-        <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
-      </div>
-    </section>
-
     <section v-else-if="panel === 'file-associations'" class="modal settings-modal">
       <header class="settings-modal-header">
         <h2>{{ t("settings.fileAssociations") }}</h2>
@@ -162,8 +337,17 @@ const emit = defineEmits<{
       </header>
       <div class="file-association-status">
         <article v-for="item in fileAssociationStatus?.associations || []" :key="item.extension">
-          <strong>{{ item.extension }}</strong>
-          <span>{{ item.associated ? t("settings.fileAssociationBound") : t("settings.fileAssociationUnbound") }}</span>
+          <div>
+            <strong>{{ item.extension }}</strong>
+            <span>{{ item.associated ? t("settings.fileAssociationBound") : t("settings.fileAssociationUnbound") }}</span>
+          </div>
+          <button
+            type="button"
+            :disabled="Boolean(fileAssociationBusy) || fileAssociationStatus?.supported === false"
+            @click="emit('updateFileAssociation', item.extension, item.associated)"
+          >
+            {{ fileAssociationBusy === item.extension ? t("common.waiting") : item.associated ? t("settings.unbindFileAssociation") : t("settings.bindFileAssociation") }}
+          </button>
         </article>
         <p v-if="fileAssociationStatus && !fileAssociationStatus.supported" class="modal-meta">
           {{ t("settings.fileAssociationsUnsupported") }}
@@ -174,10 +358,10 @@ const emit = defineEmits<{
         <button
           type="button"
           class="primary"
-          :disabled="fileAssociationBusy || fileAssociationStatus?.supported === false"
+          :disabled="Boolean(fileAssociationBusy) || fileAssociationStatus?.supported === false"
           @click="emit('registerFileAssociations')"
         >
-          {{ fileAssociationBusy ? t("common.waiting") : t("settings.bindFileAssociations") }}
+          {{ fileAssociationBusy === "all" ? t("common.waiting") : t("settings.bindFileAssociations") }}
         </button>
       </div>
     </section>
@@ -240,6 +424,11 @@ const emit = defineEmits<{
         {{ t("settings.summaryFigureAttachments") }}
         <input v-model.number="settings.summary_figure_attachment_limit" type="number" min="0" max="20" step="1" />
         <small>{{ t("settings.summaryFigureAttachmentsDescription") }}</small>
+      </label>
+      <label>
+        {{ t("settings.summaryTextCharLimit") }}
+        <input v-model.number="settings.summary_text_char_limit" type="number" min="0" max="2000000" step="1000" />
+        <small>{{ t("settings.summaryTextCharLimitDescription") }}</small>
       </label>
       <label class="prompt-template-editor">
         {{ t("settings.summaryTemplate") }}

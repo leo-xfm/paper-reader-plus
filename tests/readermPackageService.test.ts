@@ -33,6 +33,21 @@ describe("ReadermPackageService", () => {
     expect(markdown.slice(references[0].markdown_start, references[0].markdown_end)).toBe(markdown);
   });
 
+  it("keeps markdown ranges stable for ordinary, bare, and image reader anchors", () => {
+    const markdown = [
+      "Evidence: [p. 1](/reader?documentId=doc-1&anchor=anc-1&page=1)",
+      "Bare /reader?documentId=doc-2&anchor=anc-2",
+      "[![page](assets/page.png)](/reader?documentId=doc-3&anchor=anc-3&page=3)",
+    ].join("\n");
+    const references = extractReadermReferenceLinks(markdown);
+    expect(references.map((reference) => `${reference.document_id}:${reference.anchor_id}`)).toEqual([
+      "doc-1:anc-1",
+      "doc-2:anc-2",
+      "doc-3:anc-3",
+    ]);
+    expect(markdown.slice(references[2].markdown_start, references[2].markdown_end)).toBe("[![page](assets/page.png)](/reader?documentId=doc-3&anchor=anc-3&page=3)");
+  });
+
   it("resolves missing documents and anchors explicitly", () => {
     const references = resolveReadermReferences(
       [

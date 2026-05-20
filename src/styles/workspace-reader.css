@@ -45,3 +45,13 @@
 .resize-handle:hover {
   background: #fff;
 }
+
+.readerm-layout > .resize-handle,
+.readerm-layout > .resize-handle:not(:disabled):hover,
+.readerm-layout > .resize-handle:focus,
+.readerm-layout > .resize-handle:focus-visible,
+.readerm-layout > .resize-handle:active {
+  background: #fff;
+  border-color: transparent;
+  box-shadow: none;
+}

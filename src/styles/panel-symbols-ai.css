@@ -293,7 +293,7 @@
 }
 
 .ai-send-button.active {
-  background: #2563eb;
+  background: #377e9a;
 }
 
 .ai-send-button:not(:disabled):hover {
@@ -302,7 +302,7 @@
 }
 
 .ai-send-button.active:not(:disabled):hover {
-  background: #1d4ed8;
+  background: #2f6f87;
 }
 
 .ai-stop-button {
@@ -314,20 +314,34 @@
   background: #f3f4f6;
 }
 
+.summary-ai-action-region {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  margin-top: auto;
+  padding: 0 14px 20px;
+}
+
 .ai-summary-button {
-  border-color: #2563eb;
-  background: #2563eb;
+  width: auto;
+  min-width: 0;
+  height: 42px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-color: #377e9a;
+  background: #377e9a;
   color: #ffffff;
 }
 
 .ai-summary-button:not(:disabled):hover {
-  border-color: #1d4ed8;
-  background: #1d4ed8;
+  border-color: #2f6f87;
+  background: #2f6f87;
   color: #ffffff;
 }
 
 .ai-summary-button:disabled {
-  border-color: #93c5fd;
-  background: #93c5fd;
+  border-color: #377e9a;
+  background: #377e9a;
   color: #ffffff;
+  opacity: 0.55;
 }

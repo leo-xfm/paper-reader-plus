@@ -1,8 +1,17 @@
 import type { Anchor, AnchorCreateRequest, RectPct, TextQuote } from "@/types";
+import { DEFAULT_COPY_QUOTE_TEMPLATE, buildTemplatedMarkdownQuote } from "@/services/QuoteTemplateService";
 
 export type ReaderAnchorTarget = {
   documentId: string;
   anchorId: string;
+};
+
+export type ReaderDocumentView = "pdf" | "markdown" | "summary";
+
+export type ReaderDocumentTarget = {
+  documentId: string;
+  sourceType: "readerp" | "readerm" | "document";
+  view: ReaderDocumentView;
 };
 
 export type ReaderSelection = {
@@ -43,6 +52,30 @@ export function parseReaderAnchorHref(href: string): ReaderAnchorTarget | null {
     return null;
   }
   return null;
+}
+
+export function parseReaderDocumentHref(href: string): ReaderDocumentTarget | null {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "readerp:" && url.protocol !== "readerm:") return null;
+    if (url.hostname !== "document") return null;
+    const documentId = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+    if (!documentId) return null;
+    return {
+      documentId,
+      sourceType: url.protocol === "readerm:" ? "readerm" : "readerp",
+      view: parseReaderDocumentView(url.searchParams.get("view") || url.searchParams.get("source")),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseReaderDocumentView(value: string | null): ReaderDocumentView {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "markdown" || normalized === "note" || normalized === "notes") return "markdown";
+  if (normalized === "summary") return "summary";
+  return "pdf";
 }
 
 export function buildTextQuote(selection: ReaderSelection, pageItems: Array<{ text: string }> = []): TextQuote {
@@ -100,7 +133,6 @@ export function buildImageRegionAnchorCreateRequest(pageIndex: number, rectPct: 
   };
 }
 
-export function buildMarkdownQuote(anchor: Anchor, text?: string) {
-  const exact = text || anchor.text_quote.exact;
-  return `> ${exact}\n\nSource: [p. ${anchor.page_index + 1}](${buildReaderAnchorHref(anchor, anchor.page_index + 1)})`;
+export function buildMarkdownQuote(anchor: Anchor, text?: string, template = DEFAULT_COPY_QUOTE_TEMPLATE) {
+  return buildTemplatedMarkdownQuote({ anchor, text, template });
 }

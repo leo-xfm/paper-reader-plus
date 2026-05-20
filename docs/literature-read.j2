@@ -26,16 +26,20 @@ Loaded paper content:
 
 # Constraints
 - Use only the loaded paper content, current notes/summary, and reader evidence anchors as the source of truth.
-- Every major claim must be followed by an evidence line.
+- Treat the links under "Reader evidence anchors" as the only reusable anchor links.
+- Every major claim must be followed immediately by an evidence line.
+- Every subsection item (a, b, c, etc.) must contain at least one evidence line after its answer.
 - When evidence supports a claim, format the evidence line exactly as: Evidence: [p. N](/reader?documentId=...&anchor=...).
 - Reuse only reader anchor links provided under "Reader evidence anchors"; do not invent documentId, anchor, page, or URL values.
 - If a claim is supported by loaded text but no matching reader anchor is available, write: Evidence: Needs verification.
+- Do not place all evidence links only at the end; keep each evidence line next to the claim it supports.
 - Do not invent citations, experiments, datasets, metrics, implementation details, or open-source status.
 - If the provided text does not contain enough evidence for a requested item, write "Not mentioned in the provided text".
 - Focus on methodology. Do not over-discuss general introduction or conclusion material.
 
 # Output Contract
 Use the exact structure, numbering, and headers below. The full response must be valid Markdown.
+For each requested item, write the answer first, then one or more evidence lines directly below it. Evidence lines must use only the provided reader anchor links, or `Evidence: Needs verification`.
 
 {% if language and language != 'English' %}
 **0. Abstract Translation**

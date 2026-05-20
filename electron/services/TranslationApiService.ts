@@ -1,4 +1,9 @@
 import { createHash, randomInt } from "node:crypto";
+import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
+import { connect as netConnect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+import type { RequestOptions } from "node:https";
+import type { Duplex } from "node:stream";
 import type { Settings } from "./SettingsTypes.js";
 import { requestAgentChat, type AgentChatPayload } from "./AgentApiService.js";
 
@@ -27,6 +32,95 @@ export function baiduLanguageCode(language: string) {
 
 export function baiduSign(appId: string, query: string, salt: string, appKey: string) {
   return createHash("md5").update(`${appId}${query}${salt}${appKey}`, "utf8").digest("hex");
+}
+
+function proxyUrl(settings?: Settings) {
+  if (settings?.network_proxy_enabled && settings.network_proxy_url.trim()) return settings.network_proxy_url.trim();
+  return process.env.https_proxy || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.HTTP_PROXY || "";
+}
+
+class HttpConnectHttpsAgent extends HttpsAgent {
+  constructor(private readonly proxy: URL, private readonly target: URL) {
+    super();
+  }
+
+  override createConnection(_options: RequestOptions, callback?: (error: Error | null, stream: Duplex) => void) {
+    const proxyPort = Number.parseInt(this.proxy.port || "80", 10);
+    const socket = netConnect(proxyPort, this.proxy.hostname);
+    socket.setTimeout(45_000);
+    socket.once("connect", () => {
+      const targetHost = `${this.target.hostname}:${this.target.port || "443"}`;
+      const auth = this.proxy.username
+        ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(this.proxy.username)}:${decodeURIComponent(this.proxy.password)}`).toString("base64")}\r\n`
+        : "";
+      socket.write(`CONNECT ${targetHost} HTTP/1.1\r\nHost: ${targetHost}\r\n${auth}Connection: close\r\n\r\n`);
+    });
+
+    let response = Buffer.alloc(0);
+    const onData = (chunk: Buffer) => {
+      response = Buffer.concat([response, chunk]);
+      const headerEnd = response.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      socket.off("data", onData);
+      const header = response.subarray(0, headerEnd).toString("utf8");
+      if (!/^HTTP\/1\.[01] 2\d\d\b/.test(header)) {
+        socket.destroy(new Error("Proxy CONNECT failed"));
+        return;
+      }
+      const secureSocket = tlsConnect({ socket, servername: this.target.hostname });
+      callback?.(null, secureSocket);
+    };
+    socket.on("data", onData);
+    socket.once("timeout", () => socket.destroy(new Error("Timed out connecting to proxy")));
+    socket.once("error", (error) => callback?.(error, socket));
+    return null;
+  }
+}
+
+export function googleTranslationProxyAgentFor(url: string, settings?: Settings) {
+  const rawProxy = proxyUrl(settings);
+  if (!rawProxy || !/^https:\/\//i.test(url)) return undefined;
+  const target = new URL(url);
+  const proxy = new URL(rawProxy);
+  if (proxy.protocol !== "http:") return undefined;
+  return new HttpConnectHttpsAgent(proxy, target);
+}
+
+async function postJsonWithHttps(url: string, body: unknown, settings: Settings) {
+  const bodyText = JSON.stringify(body);
+  return new Promise<{ statusCode: number; text: string }>((resolve, reject) => {
+    const request = httpsRequest(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(bodyText),
+        },
+        timeout: 45_000,
+        agent: googleTranslationProxyAgentFor(url, settings),
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        let receivedBytes = 0;
+        response.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+          receivedBytes += chunk.length;
+        });
+        response.on("end", () => {
+          resolve({
+            statusCode: response.statusCode || 0,
+            text: Buffer.concat(chunks, receivedBytes).toString("utf8"),
+          });
+        });
+        response.on("error", reject);
+      },
+    );
+    request.on("timeout", () => request.destroy(new Error("Timed out connecting to Google Translation.")));
+    request.on("error", reject);
+    request.write(bodyText);
+    request.end();
+  });
 }
 
 function textFromPayload(payload: TranslationPayload) {
@@ -63,21 +157,16 @@ async function requestGoogleTranslation(settings: Settings, payload: Translation
   if (!settings.google_api_key) throw new Error("Google API key is not configured.");
   const target = googleLanguageCode(String(payload.target_language || settings.translator_target_language || "Chinese"));
   const url = `https://translation.googleapis.com/v3/projects/${encodeURIComponent(settings.google_project_id)}:translateText?key=${encodeURIComponent(settings.google_api_key)}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [text],
-      sourceLanguageCode: "auto",
-      targetLanguageCode: target,
-      mimeType: "text/plain",
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(body || `Google translation failed: ${response.status}`);
+  const response = await postJsonWithHttps(url, {
+    contents: [text],
+    sourceLanguageCode: "auto",
+    targetLanguageCode: target,
+    mimeType: "text/plain",
+  }, settings);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(response.text || `Google translation failed: ${response.statusCode}`);
   }
-  const content = extractGoogleContent(await response.json()).trim();
+  const content = extractGoogleContent(JSON.parse(response.text)).trim();
   if (!content) throw new Error("Google translation returned an empty response.");
   return { content };
 }

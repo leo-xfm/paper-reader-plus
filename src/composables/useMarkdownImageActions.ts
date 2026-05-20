@@ -4,11 +4,12 @@ import type { PdfTextItem } from "@/pdf/pdfTypes";
 import { toIpcPlainObject } from "@/services/IpcPayloadService";
 import { buildImageRegionAnchorCreateRequest, type ReaderSelection } from "@/services/ReaderAnchorService";
 import { linkedImageMarkdown, markdownImagePattern, resizeMarkdownImage } from "@/services/MarkdownImageService";
-import type { Anchor, AnnotationType, DocumentContext, RectPct } from "@/types";
+import type { Anchor, AnnotationType, DocumentContext, RectPct, Settings } from "@/types";
 
 type TextSelection = ReaderSelection & { position: { left: number; top: number; bottom?: number } };
 type MarkdownTarget = "notes" | "summary";
-type PendingImageInsert = { target: MarkdownTarget; selection?: { start: number; end: number } };
+type PendingImageInsert = { target: MarkdownTarget; selection?: { start: number; end: number }; kind?: "image" | "formula" };
+type ImageSizeInput = { width: string; height: string };
 
 type UseMarkdownImageActionsOptions = {
   context: Ref<DocumentContext | null>;
@@ -22,13 +23,20 @@ type UseMarkdownImageActionsOptions = {
   selectionState: Ref<TextSelection | null>;
   annotationToolMode: Ref<AnnotationType | "select" | "image">;
   activeAnchor: Ref<Anchor | null>;
+  settings: Ref<Settings | null>;
+  getInsertionSelection?: (target: MarkdownTarget) => { start: number; end: number } | undefined;
   showNotice: (message: string) => void;
+  requestImageSize: (current: ImageSizeInput) => Promise<ImageSizeInput | null>;
 };
 
 function insertMarkdownAt(value: string, markdown: string, selection?: { start: number; end: number }) {
   const insertion = `\n\n${markdown}\n\n`;
   if (!selection) return `${value}${insertion}`;
   return `${value.slice(0, selection.start)}${insertion}${value.slice(selection.end)}`;
+}
+
+function formulaMarkdown(latex: string) {
+  return `$$\n${latex.trim()}\n$$`;
 }
 
 export function useMarkdownImageActions(options: UseMarkdownImageActionsOptions) {
@@ -51,15 +59,25 @@ export function useMarkdownImageActions(options: UseMarkdownImageActionsOptions)
       options.showNotice("Open a PDF document before capturing an image region");
       return;
     }
-    options.pendingImageInsert.value = payload;
+    options.pendingImageInsert.value = {
+      ...payload,
+      selection: payload.selection ?? options.getInsertionSelection?.(payload.target),
+    };
     options.selectionState.value = null;
     options.annotationToolMode.value = "image";
-    options.showNotice(`Drag a region on the PDF to insert it into ${payload.target === "summary" ? "Summary" : "Notes"}`);
+    options.showNotice(`Drag a region on the PDF to insert ${payload.kind === "formula" ? "a formula" : "an image"} into ${payload.target === "summary" ? "Summary" : "Notes"}`);
   }
 
   async function pasteImageAsset(payload: PendingImageInsert & { dataUrl: string }) {
     if (!options.context.value) return;
     try {
+      if (payload.kind === "formula") {
+        if (!options.settings.value?.simpletex_ocr_token?.trim()) throw new Error("SimpleTex OCR token is not configured.");
+        const result = await window.paperReaderPlus.recognizeLatexImage(payload.dataUrl);
+        appendMarkdown(payload.target, formulaMarkdown(result.latex), payload.selection);
+        options.showNotice("Formula inserted");
+        return;
+      }
       const result = await window.paperReaderPlus.saveImageDataUrl(options.context.value.document.document_id, payload.dataUrl, "pasted-image");
       appendMarkdown(payload.target, result.markdown, payload.selection);
       options.context.value.assets = [...(options.context.value.assets || []), result.asset];
@@ -69,7 +87,7 @@ export function useMarkdownImageActions(options: UseMarkdownImageActionsOptions)
     }
   }
 
-  function resizeMarkdownAssetImage(payload: { target: MarkdownTarget; assetPath: string }) {
+  async function resizeMarkdownAssetImage(payload: { target: MarkdownTarget; assetPath: string }) {
     const current = payload.target === "summary" ? options.summaryDraft.value : options.noteDraft.value;
     const match = current.match(markdownImagePattern(payload.assetPath));
     if (!match) {
@@ -78,10 +96,10 @@ export function useMarkdownImageActions(options: UseMarkdownImageActionsOptions)
     }
     const currentWidth = match[3] || "";
     const currentHeight = match[4] || "";
-    const widthInput = window.prompt("Image width in pixels. Leave blank for auto.", currentWidth);
-    if (widthInput === null) return;
-    const heightInput = window.prompt("Image height in pixels. Leave blank for auto.", currentHeight);
-    if (heightInput === null) return;
+    const size = await options.requestImageSize({ width: currentWidth, height: currentHeight });
+    if (!size) return;
+    const widthInput = size.width;
+    const heightInput = size.height;
     const width = widthInput.trim() ? Number(widthInput.trim()) : 0;
     const height = heightInput.trim() ? Number(heightInput.trim()) : 0;
     if ((!Number.isFinite(width) || width < 0 || width > 9999) || (!Number.isFinite(height) || height < 0 || height > 9999)) {
@@ -99,6 +117,15 @@ export function useMarkdownImageActions(options: UseMarkdownImageActionsOptions)
       if (!options.context.value) return;
       const pending = options.pendingImageInsert.value;
       const target = pending?.target || (options.rightPanelTab.value === "summary" ? "summary" : "notes");
+      if (pending?.kind === "formula") {
+        if (!options.settings.value?.simpletex_ocr_token?.trim()) throw new Error("SimpleTex OCR token is not configured.");
+        const result = await window.paperReaderPlus.recognizeLatexImage(payload.dataUrl);
+        appendMarkdown(target, formulaMarkdown(result.latex), pending?.selection);
+        options.pendingImageInsert.value = null;
+        options.annotationToolMode.value = "select";
+        options.showNotice(`Inserted formula from page ${payload.pageIndex + 1}`);
+        return;
+      }
       const result = await window.paperReaderPlus.saveImageDataUrl(
         options.context.value.document.document_id,
         payload.dataUrl,

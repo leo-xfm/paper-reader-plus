@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { dialog, ipcMain, Menu, shell } from "electron";
 import { createReaderPackageBuffer } from "../ReaderPackageService.js";
+import { dialogLabel } from "../i18n.js";
 import { buildPackageHealthReport } from "../services/HealthCheckService.js";
 import { cleanupUnusedDocumentResources } from "../services/MaintenanceService.js";
 import type { IpcContext, StoredSymbolDefinition } from "./storeContext.js";
@@ -89,9 +91,9 @@ async function saveReaderPackageSnapshot(ctx: IpcContext, documentId: string) {
   const summary = ctx.store.summaries[documentId]?.content || "";
   const aiHistory = ctx.store.ai_history[documentId] || [];
   const pdfData = existsSync(document.file_path) && document.source_type !== "markdown" && document.source_type !== "readerm"
-    ? readFileSync(document.file_path)
+    ? await readFile(document.file_path)
     : undefined;
-  const latexData = document.latex_path && existsSync(document.latex_path) ? readFileSync(document.latex_path) : undefined;
+  const latexData = document.latex_path && existsSync(document.latex_path) ? await readFile(document.latex_path) : undefined;
   const buffer = await createReaderPackageBuffer({
     document,
     note,
@@ -102,19 +104,25 @@ async function saveReaderPackageSnapshot(ctx: IpcContext, documentId: string) {
     symbols: ctx.store.symbols[documentId] || [],
     pdfData,
     latexData,
-    assets: ctx.packageAssetsForDocument(documentId, note, summary, aiHistory.map((message) => message.content).join("\n")),
+    assets: await ctx.packageAssetsForDocumentAsync(documentId, note, summary, aiHistory.map((message) => message.content).join("\n")),
   });
-  writeFileSync(document.readerp_path, buffer);
+  await writeFile(document.readerp_path, buffer);
 }
 
 async function confirmDeleteDocument(ctx: IpcContext, title: string, fileName: string): Promise<DeleteMode | null> {
+  const language = ctx.getSettings().ui_language;
+  const displayTitle = title || fileName;
   const result = await dialog.showMessageBox(ctx.window, {
     type: "question",
-    buttons: ["Delete file", "Delete record only", "Cancel"],
+    buttons: [
+      dialogLabel(language, "button.deleteFile"),
+      dialogLabel(language, "button.deleteRecordOnly"),
+      dialogLabel(language, "button.cancel"),
+    ],
     defaultId: 1,
     cancelId: 2,
-    message: "Delete history item?",
-    detail: `Choose whether to delete the file for "${title || fileName}" or only remove it from the history list.`,
+    message: dialogLabel(language, "dialog.delete.message"),
+    detail: dialogLabel(language, "dialog.delete.detail", { title: displayTitle }),
   });
   if (result.response === 0) return "file";
   if (result.response === 1) return "record";
@@ -122,25 +130,31 @@ async function confirmDeleteDocument(ctx: IpcContext, title: string, fileName: s
 }
 
 async function confirmCleanupDocument(ctx: IpcContext, title: string, fileName: string) {
+  const language = ctx.getSettings().ui_language;
   const result = await dialog.showMessageBox(ctx.window, {
     type: "question",
-    buttons: ["Clean up", "Cancel"],
+    buttons: [dialogLabel(language, "button.cleanUp"), dialogLabel(language, "button.cancel")],
     defaultId: 0,
     cancelId: 1,
-    message: "Clean unused resources?",
-    detail: `Remove unused anchors and unreferenced Markdown image assets for "${title || fileName}". This keeps anchors used by annotations, reader links, and dictionary entries.`,
+    message: dialogLabel(language, "dialog.cleanup.message"),
+    detail: dialogLabel(language, "dialog.cleanup.detail", { title: title || fileName }),
   });
   return result.response === 0;
 }
 
 async function confirmSymbolRefreshSource(ctx: IpcContext): Promise<SymbolRefreshSource | null> {
+  const language = ctx.getSettings().ui_language;
   const result = await dialog.showMessageBox(ctx.window, {
     type: "question",
-    buttons: ["From LaTeX", "From loaded PDF", "Cancel"],
+    buttons: [
+      dialogLabel(language, "button.fromLatex"),
+      dialogLabel(language, "button.fromLoadedPdf"),
+      dialogLabel(language, "button.cancel"),
+    ],
     defaultId: 0,
     cancelId: 2,
-    message: "Regenerate symbol tracker?",
-    detail: "Choose the source used to regenerate symbol definitions.",
+    message: dialogLabel(language, "dialog.symbolRefreshSource.message"),
+    detail: dialogLabel(language, "dialog.symbolRefreshSource.detail"),
   });
   if (result.response === 0) return "latex";
   if (result.response === 1) return "pdf";
@@ -148,20 +162,25 @@ async function confirmSymbolRefreshSource(ctx: IpcContext): Promise<SymbolRefres
 }
 
 async function confirmSymbolRefreshMode(ctx: IpcContext): Promise<SymbolRefreshMode | null> {
+  const language = ctx.getSettings().ui_language;
   const result = await dialog.showMessageBox(ctx.window, {
     type: "question",
-    buttons: ["Keep user changes", "Reset all", "Cancel"],
+    buttons: [
+      dialogLabel(language, "button.keepUserChanges"),
+      dialogLabel(language, "button.resetAll"),
+      dialogLabel(language, "button.cancel"),
+    ],
     defaultId: 0,
     cancelId: 2,
-    message: "Existing symbol changes found",
-    detail: "Keep favorites, edited definitions, and deleted symbols, or fully reset the symbol tracker before regenerating.",
+    message: dialogLabel(language, "dialog.symbolRefreshMode.message"),
+    detail: dialogLabel(language, "dialog.symbolRefreshMode.detail"),
   });
   if (result.response === 0) return "preserve-user-state";
   if (result.response === 1) return "reset";
   return null;
 }
 
-function deleteDocumentById(ctx: IpcContext, documentId: string, mode: DeleteMode = "file") {
+async function deleteDocumentById(ctx: IpcContext, documentId: string, mode: DeleteMode = "file") {
   const document = ctx.getDocument(documentId);
   ctx.store.documents = ctx.store.documents.filter((item) => item.document_id !== documentId);
   delete ctx.store.notes[documentId];
@@ -174,12 +193,12 @@ function deleteDocumentById(ctx: IpcContext, documentId: string, mode: DeleteMod
   ctx.store.annotations = ctx.store.annotations.filter((item) => item.document_id !== documentId);
   ctx.saveStore();
   if (mode === "file") {
-    if (existsSync(document.file_path)) rmSync(document.file_path, { force: true });
-    if (document.readerp_path && existsSync(document.readerp_path)) rmSync(document.readerp_path, { force: true });
-    if (document.package_path && existsSync(document.package_path)) rmSync(document.package_path, { force: true });
-    if (document.latex_path && existsSync(document.latex_path)) rmSync(document.latex_path, { force: true });
+    if (existsSync(document.file_path)) await rm(document.file_path, { force: true });
+    if (document.readerp_path && existsSync(document.readerp_path)) await rm(document.readerp_path, { force: true });
+    if (document.package_path && existsSync(document.package_path)) await rm(document.package_path, { force: true });
+    if (document.latex_path && existsSync(document.latex_path)) await rm(document.latex_path, { force: true });
     const assetDir = ctx.documentAssetDir(documentId);
-    if (existsSync(assetDir)) rmSync(assetDir, { recursive: true, force: true });
+    if (existsSync(assetDir)) await rm(assetDir, { recursive: true, force: true });
   }
 }
 
@@ -201,7 +220,7 @@ function showDocumentInFolder(ctx: IpcContext, documentId: string) {
 async function showDocumentProperties(ctx: IpcContext, documentId: string) {
   const document = ctx.getDocument(documentId);
   const target = primaryDocumentPath(document);
-  const size = existsSync(target) ? formatFileSize(statSync(target).size) : "Missing";
+  const size = existsSync(target) ? formatFileSize((await stat(target)).size) : "Missing";
   const details = [
     `Title: ${document.title}`,
     `File name: ${document.file_name}`,
@@ -247,11 +266,11 @@ export function registerDocumentIpc(ctx: IpcContext) {
     };
   });
 
-  ipcMain.handle("documents:get-pdf-data", (_event, documentId: string) => {
+  ipcMain.handle("documents:get-pdf-data", async (_event, documentId: string) => {
     const document = ctx.getDocument(documentId);
     if (document.source_type === "markdown" || document.source_type === "readerm") throw new Error("This document does not contain a PDF.");
     if (!existsSync(document.file_path)) throw new Error("PDF file is missing.");
-    return readFileSync(document.file_path);
+    return readFile(document.file_path);
   });
 
   ipcMain.handle("documents:update-title", (_event, documentId: string, title: string) => {
@@ -273,7 +292,7 @@ export function registerDocumentIpc(ctx: IpcContext) {
     if (result.canceled || !result.filePaths[0]) return document;
     const source = result.filePaths[0];
     const target = ctx.latexTargetPath(documentId);
-    writeFileSync(target, readFileSync(source));
+    await writeFile(target, await readFile(source));
     document.latex_path = target;
     document.latex_file_name = basename(source);
     document.updated_at = ctx.now();
@@ -281,12 +300,12 @@ export function registerDocumentIpc(ctx: IpcContext) {
     return document;
   });
 
-  ipcMain.handle("documents:get-latex-source", (_event, documentId: string) => {
+  ipcMain.handle("documents:get-latex-source", async (_event, documentId: string) => {
     const document = ctx.getDocument(documentId);
     if (!document.latex_path || !existsSync(document.latex_path)) throw new Error("No LaTeX source is attached to this PDF.");
     return {
       file_name: document.latex_file_name || basename(document.latex_path),
-      content: readFileSync(document.latex_path, "utf8"),
+      content: await readFile(document.latex_path, "utf8"),
     };
   });
 
@@ -389,12 +408,12 @@ export function registerDocumentIpc(ctx: IpcContext) {
           label: "\u5220\u9664",
           click: () => {
             void confirmDeleteDocument(ctx, document.title, document.file_name)
-              .then((mode) => {
+              .then(async (mode) => {
                 if (!mode) {
                   finish(null);
                   return;
                 }
-                deleteDocumentById(ctx, documentId, mode);
+                await deleteDocumentById(ctx, documentId, mode);
                 finish({ action: "delete", documentId, mode });
               })
               .catch((cause) => {
@@ -411,8 +430,8 @@ export function registerDocumentIpc(ctx: IpcContext) {
     });
   });
 
-  ipcMain.handle("documents:delete", (_event, documentId: string, mode: DeleteMode = "file") => {
-    deleteDocumentById(ctx, documentId, mode);
+  ipcMain.handle("documents:delete", async (_event, documentId: string, mode: DeleteMode = "file") => {
+    await deleteDocumentById(ctx, documentId, mode);
   });
 
   ipcMain.handle("notes:save", (_event, documentId: string, content: string) => {

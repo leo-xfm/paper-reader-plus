@@ -9,7 +9,7 @@ import { registerReadermIpc } from "./readermIpc.js";
 import { registerSettingsAiIpc } from "./settingsAiIpc.js";
 import { createIpcContext, initStorage } from "./storeContext.js";
 
-export { createIpcContext, getSettings, initStorage } from "./storeContext.js";
+export { createIpcContext, flushStore, getSettings, initStorage } from "./storeContext.js";
 
 export function registerIpc(window: BrowserWindow) {
   const ctx = createIpcContext(window);

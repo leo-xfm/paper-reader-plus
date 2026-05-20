@@ -1,9 +1,29 @@
 import MarkdownIt from "markdown-it";
 import katex from "katex";
+import { cpp } from "@codemirror/lang-cpp";
+import { css } from "@codemirror/lang-css";
+import { go } from "@codemirror/lang-go";
+import { html } from "@codemirror/lang-html";
+import { java } from "@codemirror/lang-java";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { php } from "@codemirror/lang-php";
+import { python } from "@codemirror/lang-python";
+import { rust } from "@codemirror/lang-rust";
+import { sql } from "@codemirror/lang-sql";
+import { xml } from "@codemirror/lang-xml";
+import { yaml } from "@codemirror/lang-yaml";
+import type { LanguageSupport } from "@codemirror/language";
+import { highlightCode, tagHighlighter, tags } from "@lezer/highlight";
+import { findMarkdownHtmlBlockRanges, renderMarkdownHtmlBlock } from "@/services/MarkdownHtmlBlockService";
+import { findMarkdownCalloutBlocks, getMarkdownCalloutMeta } from "@/services/MarkdownCalloutService";
+import { isMermaidFenceInfo, renderMermaidPlaceholder } from "@/services/MermaidRenderService";
 import { markdownHeadingIdFromLine } from "@/services/MarkdownOutlineService";
 import { renderSimpleLatexToMarkdown } from "@/services/SymbolTrackerService";
 
 const MATH_PLACEHOLDER_PREFIX = "PRP_MATH_";
+const DETAILS_PLACEHOLDER_PREFIX = "PRP_DETAILS_";
+const CALLOUT_PLACEHOLDER_PREFIX = "PRP_CALLOUT_";
 const IMAGE_SIZE_PATTERN = /\s+=([1-9]\d{0,3})?x([1-9]\d{0,3})?$/;
 const IMAGE_SIZE_TITLE_PREFIX = "PRP_SIZE:";
 
@@ -11,6 +31,73 @@ type MathPlaceholder = {
   key: string;
   html: string;
 };
+
+type HtmlPlaceholder = MathPlaceholder;
+
+export type MarkdownRenderOptions = {
+  codeLineNumbers?: boolean;
+  highlightEnabled?: boolean;
+  mathEnabled?: boolean;
+};
+
+export const defaultMarkdownRenderOptions: Required<MarkdownRenderOptions> = {
+  codeLineNumbers: true,
+  highlightEnabled: true,
+  mathEnabled: true,
+};
+
+const previewCodeHighlighter = tagHighlighter([
+  { tag: tags.keyword, class: "tok-keyword" },
+  { tag: [tags.atom, tags.bool, tags.url, tags.contentSeparator, tags.labelName], class: "tok-atom" },
+  { tag: [tags.literal, tags.inserted], class: "tok-literal" },
+  { tag: [tags.string, tags.deleted], class: "tok-string" },
+  { tag: [tags.regexp, tags.escape, tags.special(tags.string)], class: "tok-string2" },
+  { tag: tags.definition(tags.variableName), class: "tok-variableName tok-definition" },
+  { tag: tags.local(tags.variableName), class: "tok-variableName tok-local" },
+  { tag: [tags.typeName, tags.namespace], class: "tok-typeName" },
+  { tag: tags.className, class: "tok-className" },
+  { tag: [tags.special(tags.variableName), tags.macroName], class: "tok-variableName2" },
+  { tag: tags.definition(tags.propertyName), class: "tok-propertyName tok-definition" },
+  { tag: tags.propertyName, class: "tok-propertyName" },
+  { tag: tags.number, class: "tok-number" },
+  { tag: tags.operator, class: "tok-operator" },
+  { tag: tags.comment, class: "tok-comment" },
+  { tag: tags.meta, class: "tok-meta" },
+  { tag: tags.invalid, class: "tok-invalid" },
+]);
+
+const previewCodeLanguages = new Map<string, LanguageSupport>([
+  ["c", cpp()],
+  ["cc", cpp()],
+  ["cpp", cpp()],
+  ["c++", cpp()],
+  ["h", cpp()],
+  ["hpp", cpp()],
+  ["css", css()],
+  ["go", go()],
+  ["golang", go()],
+  ["html", html()],
+  ["htm", html()],
+  ["java", java()],
+  ["js", javascript()],
+  ["javascript", javascript()],
+  ["jsx", javascript({ jsx: true })],
+  ["ts", javascript({ typescript: true })],
+  ["typescript", javascript({ typescript: true })],
+  ["tsx", javascript({ jsx: true, typescript: true })],
+  ["json", json()],
+  ["json5", json()],
+  ["php", php()],
+  ["py", python()],
+  ["python", python()],
+  ["rs", rust()],
+  ["rust", rust()],
+  ["sql", sql()],
+  ["xml", xml()],
+  ["svg", xml()],
+  ["yaml", yaml()],
+  ["yml", yaml()],
+]);
 
 export function isAllowedMarkdownUrl(value: string) {
   const trimmed = value.trim();
@@ -20,6 +107,8 @@ export function isAllowedMarkdownUrl(value: string) {
   if (/^https?:\/\//i.test(trimmed)) return true;
   if (/^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml);base64,/i.test(trimmed)) return true;
   if (/^readerp:\/\//i.test(trimmed)) return true;
+  if (/^readerm:\/\//i.test(trimmed)) return true;
+  if (/^[^\s<>"']+$/.test(trimmed) && !trimmed.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return true;
   return false;
 }
 
@@ -53,6 +142,61 @@ function replaceInlineMath(line: string, placeholders: MathPlaceholder[]) {
   });
 }
 
+function replaceInlineHighlights(line: string, placeholders: MathPlaceholder[]) {
+  return line.replace(/(^|[^\\=])==([^=\n].*?[^=\n])==/g, (_match, prefix: string, content: string) => {
+    const key = `${MATH_PLACEHOLDER_PREFIX}${placeholders.length}`;
+    placeholders.push({ key, html: `<mark class="markdown-highlight">${escapeHtml(content)}</mark>` });
+    return `${prefix}${key}`;
+  });
+}
+
+function extractHtmlBlockPlaceholders(source: string) {
+  const placeholders: HtmlPlaceholder[] = [];
+  let output = "";
+  let lastIndex = 0;
+  for (const range of findMarkdownHtmlBlockRanges(source)) {
+    output += source.slice(lastIndex, range.start);
+    const html = renderMarkdownHtmlBlock(range);
+    if (html) {
+      const key = `${DETAILS_PLACEHOLDER_PREFIX}${placeholders.length}`;
+      placeholders.push({ key, html });
+      output += `\n\n${key}\n\n`;
+    } else {
+      output += range.source;
+    }
+    lastIndex = range.end;
+  }
+  output += source.slice(lastIndex);
+  return { source: output, placeholders };
+}
+
+function extractCalloutPlaceholders(source: string, options: Required<MarkdownRenderOptions>) {
+  const placeholders: HtmlPlaceholder[] = [];
+  const blocks = findMarkdownCalloutBlocks(source);
+  if (!blocks.length) return { source, placeholders };
+  let output = "";
+  let lastIndex = 0;
+  for (const block of blocks) {
+    output += source.slice(lastIndex, block.start);
+    const body = block.body.replace(/^\s+$/, "");
+    const meta = getMarkdownCalloutMeta(block.kind);
+    const titleHtml = [
+      `<span class="markdown-callout-icon markdown-callout-icon-${meta.icon}" aria-hidden="true"></span>`,
+      `<span class="markdown-callout-label">${escapeHtml(meta.label)}</span>`,
+    ].join("");
+    const key = `${CALLOUT_PLACEHOLDER_PREFIX}${placeholders.length}`;
+    const innerHtml = body ? renderMarkdownContent(body, options) : "";
+    placeholders.push({
+      key,
+      html: `<aside class="markdown-callout markdown-callout-${block.kind}"><div class="markdown-callout-title">${titleHtml}</div>${innerHtml ? `<div class="markdown-callout-body">${innerHtml}</div>` : ""}</aside>`,
+    });
+    output += `\n\n${key}\n\n`;
+    lastIndex = block.end;
+  }
+  output += source.slice(lastIndex);
+  return { source: output, placeholders };
+}
+
 function markCodeBlockHtml(html: string) {
   return html.replace(/<pre><code(?: class="([^"]*)")?/, (_match, className = "") => {
     const codeClass = ["markdown-code", className].filter(Boolean).join(" ");
@@ -60,7 +204,54 @@ function markCodeBlockHtml(html: string) {
   });
 }
 
-export function extractMathPlaceholders(source: string) {
+function languageFromFenceInfo(info: string) {
+  const languageName = (info.trim().split(/\s+/)[0] || "").toLowerCase().replace(/^language-/, "");
+  return languageName ? previewCodeLanguages.get(languageName) : undefined;
+}
+
+function renderCodeBlock(content: string, languageName: string, highlightedContent: string, options: Required<MarkdownRenderOptions>) {
+  const codeClass = ["markdown-code", languageName ? `language-${languageName}` : ""].filter(Boolean).join(" ");
+  const languageBadge = languageName ? `<span class="markdown-code-language">${escapeHtml(languageName)}</span>` : "";
+  if (!options.codeLineNumbers) {
+    return `<pre class="markdown-code-block"><code class="${codeClass}">${highlightedContent}</code>${languageBadge}</pre>\n`;
+  }
+  const normalizedContent = content.endsWith("\n") ? content.slice(0, -1) : content;
+  const normalizedHighlighted = content.endsWith("\n") ? highlightedContent.replace(/\n$/, "") : highlightedContent;
+  const sourceLines = normalizedContent.split("\n");
+  const highlightedLines = normalizedHighlighted.split("\n");
+  const lineCount = Math.max(sourceLines.length, highlightedLines.length, 1);
+  const renderedLines = Array.from({ length: lineCount }, (_, index) => {
+    const line = highlightedLines[index] ?? "";
+    return `<span class="markdown-code-line"><span class="markdown-code-line-number">${index + 1}</span><span class="markdown-code-line-content">${line}</span></span>`;
+  }).join("");
+  return `<pre class="markdown-code-block"><code class="${codeClass}">${renderedLines}</code>${languageBadge}</pre>\n`;
+}
+
+function renderCodeFence(content: string, info: string, options: Required<MarkdownRenderOptions>) {
+  if (isMermaidFenceInfo(info)) return renderMermaidPlaceholder(content);
+
+  const languageName = (info.trim().split(/\s+/)[0] || "").replace(/[^A-Za-z0-9_+#.-]/g, "");
+  const language = languageFromFenceInfo(info);
+  if (!language) {
+    return renderCodeBlock(content, languageName, escapeHtml(content), options);
+  }
+
+  let highlighted = "";
+  highlightCode(
+    content,
+    language.language.parser.parse(content),
+    previewCodeHighlighter,
+    (text, classes) => {
+      highlighted += classes ? `<span class="${classes}">${escapeHtml(text)}</span>` : escapeHtml(text);
+    },
+    () => {
+      highlighted += "\n";
+    },
+  );
+  return renderCodeBlock(content, languageName, highlighted, options);
+}
+
+export function extractMathPlaceholders(source: string, options: Required<MarkdownRenderOptions> = defaultMarkdownRenderOptions) {
   const placeholders: MathPlaceholder[] = [];
   const output: string[] = [];
   const lines = source.replace(/\r\n/g, "\n").split("\n");
@@ -77,7 +268,7 @@ export function extractMathPlaceholders(source: string) {
       output.push(line);
       continue;
     }
-    if (line.trim() === "$$") {
+    if (options.mathEnabled && line.trim() === "$$") {
       if (blockMath) {
         const key = `${MATH_PLACEHOLDER_PREFIX}${placeholders.length}`;
         placeholders.push({ key, html: renderMath(blockMath.join("\n").trim(), true) });
@@ -94,7 +285,9 @@ export function extractMathPlaceholders(source: string) {
       blockMath.push(line);
       continue;
     }
-    output.push(replaceInlineMath(line, placeholders));
+    let nextLine = options.mathEnabled ? replaceInlineMath(line, placeholders) : line;
+    if (options.highlightEnabled) nextLine = replaceInlineHighlights(nextLine, placeholders);
+    output.push(nextLine);
   }
 
   if (blockMath) {
@@ -108,10 +301,10 @@ export function extractMathPlaceholders(source: string) {
   };
 }
 
-function createMarkdownIt() {
+function createMarkdownIt(renderOptions: Required<MarkdownRenderOptions>) {
   const md = new MarkdownIt({
     html: false,
-    linkify: false,
+    linkify: true,
     typographer: false,
     breaks: false,
   });
@@ -120,6 +313,9 @@ function createMarkdownIt() {
 
   const defaultFence = md.renderer.rules.fence || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
   md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const highlighted = renderCodeFence(token.content, token.info || "", renderOptions);
+    if (highlighted) return highlighted;
     return markCodeBlockHtml(defaultFence(tokens, idx, options, env, self));
   };
 
@@ -189,8 +385,6 @@ function createMarkdownIt() {
   return md;
 }
 
-const markdownIt = createMarkdownIt();
-
 function stripUnsafeImageUrls(source: string) {
   return source.replace(/!\[([^\]]*)\]\(([^)\n]+)\)/g, (match, alt: string, target: string) => {
     const url = target.trim().split(/\s+/)[0] || "";
@@ -205,11 +399,29 @@ function normalizeImageSizeSyntax(source: string) {
   });
 }
 
-export function renderMarkdown(source: string) {
-  const extracted = extractMathPlaceholders(normalizeImageSizeSyntax(stripUnsafeImageUrls(renderSimpleLatexToMarkdown(source || ""))));
+function replaceHtmlPlaceholder(rendered: string, key: string, html: string) {
+  return rendered
+    .replaceAll(`<p>${key}</p>`, html)
+    .replaceAll(key, html);
+}
+
+export function renderMarkdownContent(source: string, options: MarkdownRenderOptions = defaultMarkdownRenderOptions) {
+  const resolvedOptions = { ...defaultMarkdownRenderOptions, ...options };
+  const markdownIt = createMarkdownIt(resolvedOptions);
+  const normalizedSource = normalizeImageSizeSyntax(stripUnsafeImageUrls(renderSimpleLatexToMarkdown(source || "")));
+  const calloutBlocks = extractCalloutPlaceholders(normalizedSource, resolvedOptions);
+  const htmlBlocks = extractHtmlBlockPlaceholders(calloutBlocks.source);
+  const extracted = extractMathPlaceholders(
+    htmlBlocks.source,
+    resolvedOptions,
+  );
   let rendered = markdownIt.render(extracted.source);
-  for (const placeholder of extracted.placeholders) {
-    rendered = rendered.replaceAll(placeholder.key, placeholder.html);
+  for (const placeholder of [...extracted.placeholders, ...htmlBlocks.placeholders, ...calloutBlocks.placeholders]) {
+    rendered = replaceHtmlPlaceholder(rendered, placeholder.key, placeholder.html);
   }
   return rendered;
+}
+
+export function renderMarkdown(source: string, options: MarkdownRenderOptions = defaultMarkdownRenderOptions) {
+  return renderMarkdownContent(source, options);
 }

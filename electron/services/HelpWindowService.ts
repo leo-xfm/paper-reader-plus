@@ -5,25 +5,48 @@ import { app, BrowserWindow, ipcMain, shell } from "electron";
 let helpWindow: BrowserWindow | null = null;
 let helpIpcRegistered = false;
 
-function readHelpContent() {
-  const helpPath = join(app.getAppPath(), "docs/help.md");
+type HelpTopic = "guide" | "api";
+
+function normalizeHelpTopic(topic: unknown): HelpTopic {
+  return topic === "api" ? "api" : "guide";
+}
+
+function readMarkdownDoc(fileName: string) {
+  const helpPath = join(app.getAppPath(), "docs", fileName);
   try {
     return readFileSync(helpPath, "utf8");
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    return `# Paper Reader Plus Help\n\nCould not load \`${helpPath}\`.\n\n${message}`;
+    return `Could not load \`${helpPath}\`.\n\n${message}`;
+  }
+}
+
+function readHelpContent(topic: unknown) {
+  const fileName = normalizeHelpTopic(topic) === "api" ? "api.md" : "help.md";
+  return `${readMarkdownDoc(fileName).trim()}\n`;
+}
+
+function loadHelpTopic(topic: HelpTopic) {
+  if (!helpWindow || helpWindow.isDestroyed()) return;
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    void helpWindow.loadURL(`${devServerUrl}?help=${topic}`);
+  } else {
+    void helpWindow.loadFile(join(app.getAppPath(), "dist/index.html"), { query: { help: topic } });
   }
 }
 
 export function registerHelpIpc() {
   if (helpIpcRegistered) return;
-  ipcMain.handle("help:get-content", () => readHelpContent());
+  ipcMain.handle("help:get-content", (_event, topic) => readHelpContent(topic));
   helpIpcRegistered = true;
 }
 
-export function openHelpWindow(parent: BrowserWindow | null) {
+export function openHelpWindow(parent: BrowserWindow | null, topic: unknown = "guide") {
   registerHelpIpc();
+  const helpTopic = normalizeHelpTopic(topic);
   if (helpWindow && !helpWindow.isDestroyed()) {
+    loadHelpTopic(helpTopic);
     helpWindow.focus();
     return;
   }
@@ -52,10 +75,5 @@ export function openHelpWindow(parent: BrowserWindow | null) {
     void shell.openExternal(url);
     return { action: "deny" };
   });
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    void helpWindow.loadURL(`${devServerUrl}?help=1`);
-  } else {
-    void helpWindow.loadFile(join(app.getAppPath(), "dist/index.html"), { query: { help: "1" } });
-  }
+  loadHelpTopic(helpTopic);
 }

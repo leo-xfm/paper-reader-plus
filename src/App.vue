@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { FilePlus2, FileText, Highlighter, Underline } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { FilePlus2, FileText, Highlighter, PanelRightOpen, Underline } from "lucide-vue-next";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import PdfWorkspace from "@/components/PdfWorkspace.vue";
 import PdfReaderPane from "@/components/PdfReaderPane.vue";
+import MarkdownWorkspace from "@/components/MarkdownWorkspace.vue";
 import ReadermWorkspace from "@/components/ReadermWorkspace.vue";
 import HelpPage from "@/components/HelpPage.vue";
 import ReaderFileTabs from "@/components/ReaderFileTabs.vue";
@@ -15,6 +16,7 @@ import type { RightPanelTab } from "@/components/ReaderPanelTabs";
 import SelectionToolbar from "@/components/SelectionToolbar.vue";
 import TableSheetModal from "@/components/TableSheetModal.vue";
 import ArxivImportModal from "@/components/ArxivImportModal.vue";
+import ImageSizeModal from "@/components/ImageSizeModal.vue";
 import SettingsModal, { type SettingsPanel } from "@/components/SettingsModal.vue";
 import TranslationResultModal from "@/components/TranslationResultModal.vue";
 import { usePdfDocument } from "@/composables/usePdfDocument";
@@ -22,20 +24,23 @@ import { usePdfPages } from "@/composables/usePdfPages";
 import { usePdfSearch } from "@/composables/usePdfSearch";
 import { useDocumentLifecycle } from "@/composables/useDocumentLifecycle";
 import { useMarkdownImageActions } from "@/composables/useMarkdownImageActions";
+import { useMarkdownZoom } from "@/composables/useMarkdownZoom";
 import { usePdfPreviewActions } from "@/composables/usePdfPreviewActions";
 import { useAnnotationActions } from "@/composables/useAnnotationActions";
 import { useAiTranslationActions } from "@/composables/useAiTranslationActions";
 import { useSymbolTracking } from "@/composables/useSymbolTracking";
+import { useLibrarySearch } from "@/composables/useLibrarySearch";
+import { useReaderTabs } from "@/composables/useReaderTabs";
+import { useReadermOutline } from "@/composables/useReadermOutline";
 import { setUiLanguage, useI18n } from "@/i18n";
 import type { ArxivImportProgress } from "@/env";
 import type { PdfHoverPreview, PdfTableSheet, PdfTextItem } from "@/pdf/pdfTypes";
 import { toIpcPlainObject } from "@/services/IpcPayloadService";
-import { extractMarkdownOutline } from "@/services/MarkdownOutlineService";
-import { parseReaderAnchorHref, type ReaderSelection } from "@/services/ReaderAnchorService";
+import { parseReaderAnchorHref, parseReaderDocumentHref, type ReaderDocumentView, type ReaderSelection } from "@/services/ReaderAnchorService";
 import { ANNOTATION_COLORS, annotationMatchesFilters, sortAnnotations, type AnnotationFilters, type AnnotationToolMode } from "@/services/ReaderAnnotationService";
 import { buildAuthorNetwork, type AuthorDocumentInput } from "@/services/AuthorNetworkService";
 import { findSymbolDefinition, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, FileAssociationStatus, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
+import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, FileAssociationExtension, FileAssociationStatus, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -44,10 +49,11 @@ const isHelpPage = new URLSearchParams(window.location.search).has("help");
 
 const documents = ref<LibraryDocument[]>([]);
 const healthReports = ref<Record<string, PackageHealthReport | undefined>>({});
-const librarySearchQuery = ref("");
-const librarySearchResults = ref<LibrarySearchResult[]>([]);
-const librarySearchLoading = ref(false);
-let librarySearchTimer: number | null = null;
+const {
+  librarySearchQuery,
+  librarySearchResults,
+  librarySearchLoading,
+} = useLibrarySearch(showNotice);
 const selectedDocumentId = ref("");
 const context = ref<DocumentContext | null>(null);
 const { pdfDocument, pageNumbers, outlineItems, loadPdf, clearPdf } = usePdfDocument();
@@ -68,6 +74,12 @@ const loading = ref(false);
 const error = ref("");
 const notice = ref("");
 const noteDraft = ref("");
+const {
+  readermOutlineItems,
+  refreshReadermOutlineNow,
+  scheduleReadermOutlineRefresh,
+  cancelReadermOutlineRefresh,
+} = useReadermOutline(context, noteDraft);
 const summaryDraft = ref("");
 const titleDraft = ref("");
 const editingTitle = ref(false);
@@ -77,14 +89,14 @@ const rightPanelCollapsed = ref(false);
 const rightPanelWidth = ref(560);
 const notesMode = ref<MarkdownEditorMode>("edit");
 const summaryMode = ref<MarkdownEditorMode>("edit");
-const readermMode = ref<MarkdownEditorMode>("live");
+const readermMode = ref<ReadermEditorMode>("live");
 const activeReadermReferenceId = ref("");
 const readermManualPdfDocumentId = ref("");
 const readermManualPdfAnchorId = ref("");
 const readermPdfNavigationKey = ref(0);
 const readermPdfCollapsed = ref(false);
 const readermPdfPaneWidth = ref(640);
-const readermCaptureRequest = ref<{ requestId: number; selection?: { start: number; end: number } } | null>(null);
+const readermCaptureRequest = ref<{ requestId: number; selection?: { start: number; end: number }; kind?: "image" | "formula" } | null>(null);
 const annotationToolMode = ref<AnnotationToolMode>("select");
 const annotationFilters = ref<AnnotationFilters>({ type: "all", color: "all", page: "all", content: "all" });
 const pageJumpDraft = ref("1");
@@ -113,7 +125,7 @@ const latexSymbols = ref<SymbolDefinition[]>([]);
 const savedSymbols = ref<SymbolDefinition[]>([]);
 const activeSymbol = ref("");
 const annotationColor = ref("#BBD4F6");
-const pendingImageInsert = ref<{ target: "notes" | "summary"; selection?: { start: number; end: number } } | null>(null);
+const pendingImageInsert = ref<{ target: "notes" | "summary"; selection?: { start: number; end: number }; kind?: "image" | "formula" } | null>(null);
 const activeSettingsPanel = ref<SettingsPanel | null>(null);
 const arxivImportOpen = ref(false);
 const arxivIdDraft = ref("");
@@ -124,9 +136,10 @@ const startDropActive = ref(false);
 const startDropDepth = ref(0);
 const settings = ref<Settings | null>(null);
 const promptTemplates = ref<PromptTemplateStatus[]>([]);
-const settingsTesting = ref<"agent" | "translation" | null>(null);
+const settingsTesting = ref<"agent" | "translation" | "simpletex" | null>(null);
 const fileAssociationStatus = ref<FileAssociationStatus | null>(null);
-const fileAssociationBusy = ref(false);
+const fileAssociationBusy = ref<FileAssociationExtension | "all" | null>(null);
+const { setMarkdownFontSize } = useMarkdownZoom();
 const aiInput = ref("");
 const aiMessages = ref<Array<{ role: "user" | "assistant"; content: string }>>([]);
 type DraftState = {
@@ -139,7 +152,13 @@ type DocumentDraftCacheEntry = {
   draft: DraftState;
   saved: DraftState;
 };
-const openDocumentIds = ref<string[]>([]);
+type ImageSizeInput = { width: string; height: string };
+const {
+  openDocumentIds,
+  addOpenDocumentTab,
+  closeOpenDocumentTab,
+  filterOpenDocumentTabs,
+} = useReaderTabs();
 const documentDraftCache = ref<Record<string, DocumentDraftCacheEntry>>({});
 const aiLoading = ref(false);
 const pendingAiTask = ref<AiChatRequest["task"] | null>(null);
@@ -172,6 +191,17 @@ let markdownAutosaveRunning = false;
 let markdownAutosaveQueued = false;
 let markdownAutosavePrimed = false;
 const markdownAutosaveDelay = 900;
+const readermWorkspaceRef = ref<InstanceType<typeof ReadermWorkspace> | null>(null);
+const readerSidePanelRef = ref<InstanceType<typeof ReaderSidePanel> | null>(null);
+const readermLayoutRef = ref<HTMLElement | null>(null);
+const readermLayoutWidth = ref(0);
+let readermLayoutResizeObserver: ResizeObserver | null = null;
+const imageSizeRequest = ref<{
+  currentWidth: string;
+  currentHeight: string;
+  error: string;
+  resolve: (value: ImageSizeInput | null) => void;
+} | null>(null);
 
 const documentTitle = computed(() => context.value?.document.title || "Paper Reader Plus");
 const totalPages = computed(() => pageNumbers.value.length);
@@ -180,23 +210,33 @@ const annotations = computed(() => sortAnnotations(context.value?.annotations ||
 const filteredAnnotations = computed(() => annotations.value.filter((annotation) => annotationMatchesFilters(annotation, annotationFilters.value)));
 const visibleSearchMatches = computed(() => searchOpen.value && searchQuery.value.trim() ? searchMatches.value : []);
 const visibleActiveSearchMatch = computed(() => searchOpen.value && searchQuery.value.trim() ? activeSearchMatch.value : null);
-const activeOutlineItems = computed(() => context.value?.document.source_type === "readerm" ? extractMarkdownOutline(noteDraft.value) : outlineItems.value);
+const activeOutlineItems = computed(() => context.value?.document.source_type === "readerm" ? readermOutlineItems.value : outlineItems.value);
 const readermReferences = computed(() => context.value?.readerm_references || []);
 const activeReadermReference = computed(() => readermReferences.value.find((reference) => reference.reference_id === activeReadermReferenceId.value) || readermReferences.value[0] || null);
-const historyPdfDocuments = computed(() => documents.value.filter((document) => document.source_type !== "markdown" && document.source_type !== "readerm"));
+const historyPdfDocuments = computed(() => documents.value.filter((document) => document.source_type !== "markdown"));
 const readermReferencedPdfDocumentId = computed(() => activeReadermReference.value?.status !== "missing-document" ? activeReadermReference.value?.document_id || "" : "");
 const readermPdfDocumentId = computed(() => readermManualPdfDocumentId.value || readermReferencedPdfDocumentId.value);
 const readermPdfAnchorId = computed(() => readermManualPdfDocumentId.value ? readermManualPdfAnchorId.value : activeReadermReference.value?.status === "resolved" ? activeReadermReference.value.anchor_id : "");
+const readermPdfSourceView = ref<ReaderDocumentView>("pdf");
 const readermResizeHandleWidth = 3;
+const clampedReadermPdfPaneWidth = computed(() => clampReadermPdfPaneWidth(readermPdfPaneWidth.value));
 const readermLayoutStyle = computed(() => ({
   gridTemplateColumns: readermPdfCollapsed.value
     ? "minmax(0, 1fr) 0 var(--rail-collapsed-width)"
-    : `minmax(500px, 1fr) ${readermResizeHandleWidth}px ${readermPdfPaneWidth.value}px`,
+    : `minmax(500px, 1fr) ${readermResizeHandleWidth}px ${clampedReadermPdfPaneWidth.value}px`,
 }));
 const authorProfiles = computed(() => buildAuthorNetwork(Object.values(authorDocuments.value)));
 const agentStatusLabel = computed(() => settings.value
   ? `${settings.value.agent_provider} / ${settings.value.ai_model} / docs/*.j2`
   : t("app.agentTemplates"));
+const defaultMarkdownEditorMode = computed<MarkdownEditorMode>(() => {
+  const mode = settings.value?.markdown_default_editor_mode;
+  return mode === "edit" || mode === "preview" ? mode : "live";
+});
+const defaultReadermEditorMode = computed<ReadermEditorMode>(() => {
+  if (defaultMarkdownEditorMode.value !== "edit") return defaultMarkdownEditorMode.value;
+  return settings.value?.readerm_edit_split_default ? "edit-preview" : "edit";
+});
 const summaryWaiting = computed(() => aiLoading.value && pendingAiTask.value === "summary");
 const promptTemplatePreview = computed(() => promptTemplates.value.map((template) => ({
   ...template,
@@ -284,7 +324,10 @@ const {
   selectionState,
   annotationToolMode,
   activeAnchor,
+  settings,
+  getInsertionSelection: getCurrentMarkdownInsertionSelection,
   showNotice,
+  requestImageSize,
 });
 
 const {
@@ -350,6 +393,8 @@ const {
   annotationCommentTextarea,
   noteDraft,
   notesMode,
+  settings,
+  getNoteInsertionSelection: getCurrentNoteInsertionSelection,
   rightPanelTab,
   rightPanelCollapsed,
   pageTextItems,
@@ -426,6 +471,22 @@ function currentDraftState(): DraftState | null {
   };
 }
 
+function getCurrentReadermMarkdown() {
+  return noteDraft.value;
+}
+
+function getCurrentReadermInsertionSelection() {
+  return readermWorkspaceRef.value?.currentSelection();
+}
+
+function getCurrentNoteInsertionSelection() {
+  return readerSidePanelRef.value?.currentNoteSelection();
+}
+
+function getCurrentMarkdownInsertionSelection(target: "notes" | "summary") {
+  return readerSidePanelRef.value?.currentMarkdownSelection(target);
+}
+
 function draftKey(draft: DraftState) {
   return JSON.stringify(draft);
 }
@@ -494,11 +555,6 @@ function updateSavedAiHistorySnapshot(documentId: string, history: Array<{ role:
     draft: { ...entry.draft, aiHistory },
     saved: { ...entry.saved, aiHistory },
   });
-}
-
-function addOpenDocumentTab(documentId: string) {
-  if (openDocumentIds.value.includes(documentId)) return;
-  openDocumentIds.value = [...openDocumentIds.value, documentId];
 }
 
 async function refreshDocumentHealth(documentId: string) {
@@ -597,7 +653,6 @@ function scheduleMarkdownAutosave() {
   if (!markdownAutosavePrimed || !context.value) return;
   const documentId = context.value.document.document_id;
   if (markdownAutosaveTimer !== null) window.clearTimeout(markdownAutosaveTimer);
-  if (librarySearchTimer !== null) window.clearTimeout(librarySearchTimer);
   markdownAutosaveDocumentId = documentId;
   markdownAutosaveTimer = window.setTimeout(() => {
     markdownAutosaveTimer = null;
@@ -704,8 +759,7 @@ async function closeDocumentTab(documentId: string) {
       if (!saved) return;
     }
   }
-  const nextOpenIds = openDocumentIds.value.filter((id) => id !== documentId);
-  openDocumentIds.value = nextOpenIds;
+  const nextOpenIds = closeOpenDocumentTab(documentId);
   const { [documentId]: _closed, ...remainingCache } = documentDraftCache.value;
   documentDraftCache.value = remainingCache;
   if (selectedDocumentId.value !== documentId) return;
@@ -720,16 +774,45 @@ async function closeDocumentTab(documentId: string) {
 
 async function deleteDocument(document: LibraryDocument) {
   await lifecycleDeleteDocument(document);
-  openDocumentIds.value = openDocumentIds.value.filter((id) => id !== document.document_id);
+  closeOpenDocumentTab(document.document_id);
   const { [document.document_id]: _deleted, ...remainingCache } = documentDraftCache.value;
   documentDraftCache.value = remainingCache;
+}
+
+function documentMatchesHistoryMode(document: LibraryDocument, mode: "readerp" | "readerm") {
+  return mode === "readerm" ? document.source_type === "readerm" : document.source_type !== "readerm";
+}
+
+async function clearHistory(mode: "readerp" | "readerm") {
+  const count = documents.value.filter((document) => documentMatchesHistoryMode(document, mode)).length;
+  if (!count) return;
+  const confirmed = window.confirm(t(mode === "readerm" ? "library.clearReadermHistoryConfirm" : "library.clearReaderpHistoryConfirm", { count }));
+  if (!confirmed) return;
+  try {
+    const result = await window.paperReaderPlus.clearDocumentHistory(mode);
+    filterOpenDocumentTabs((id) => {
+      const document = documents.value.find((item) => item.document_id === id);
+      return document ? !documentMatchesHistoryMode(document, mode) : true;
+    });
+    documentDraftCache.value = Object.fromEntries(
+      Object.entries(documentDraftCache.value).filter(([documentId]) => {
+        const document = documents.value.find((item) => item.document_id === documentId);
+        return document ? !documentMatchesHistoryMode(document, mode) : true;
+      }),
+    );
+    if (context.value && documentMatchesHistoryMode(context.value.document, mode)) clearActiveDocumentState();
+    await refreshDocuments();
+    showNotice(t("library.historyCleared", { count: result.removed }));
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 async function deleteCurrentDocument() {
   const documentId = selectedDocumentId.value;
   await lifecycleDeleteCurrentDocument();
   if (!documentId) return;
-  openDocumentIds.value = openDocumentIds.value.filter((id) => id !== documentId);
+  closeOpenDocumentTab(documentId);
   const { [documentId]: _deleted, ...remainingCache } = documentDraftCache.value;
   documentDraftCache.value = remainingCache;
 }
@@ -779,7 +862,7 @@ async function createReaderPackageFromMarkdown() {
 async function createEmptyReaderm() {
   cacheCurrentDocumentDraft();
   await lifecycleCreateEmptyReaderm();
-  readermMode.value = "edit";
+  readermMode.value = defaultReadermEditorMode.value;
   registerCurrentDocumentTab();
 }
 
@@ -787,6 +870,26 @@ async function createReadermFromMarkdown() {
   cacheCurrentDocumentDraft();
   await lifecycleCreateReadermFromMarkdown();
   registerCurrentDocumentTab();
+}
+
+async function upgradeMarkdownToReaderm() {
+  if (!context.value || context.value.document.source_type !== "markdown") return;
+  cacheCurrentDocumentDraft();
+  await flushMarkdownAutosave(context.value.document.document_id);
+  try {
+    const document = await window.paperReaderPlus.upgradeMarkdownToReadermCopy(
+      context.value.document.document_id,
+      noteDraft.value,
+    );
+    if (!document) return;
+    await refreshDocuments();
+    showNotice(t("app.markdownUpgraded"));
+    await openDocument(document.document_id);
+    readermMode.value = defaultReadermEditorMode.value;
+    registerCurrentDocumentTab();
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 function startDropFilePath(event: DragEvent) {
@@ -883,6 +986,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (markdownAutosaveTimer !== null) window.clearTimeout(markdownAutosaveTimer);
+  readermLayoutResizeObserver?.disconnect();
+  readermLayoutResizeObserver = null;
   markdownAutosaveDocumentId = "";
   if (context.value) cacheCurrentDocumentDraft();
   cancelActiveAiStream();
@@ -902,9 +1007,24 @@ watch(searchMatches, (matches) => {
   syncActiveSearchMatch();
 });
 
+watch(readermLayoutRef, (element) => {
+  readermLayoutResizeObserver?.disconnect();
+  readermLayoutResizeObserver = null;
+  readermLayoutWidth.value = element?.clientWidth || 0;
+  if (!element) return;
+  readermLayoutResizeObserver = new ResizeObserver((entries) => {
+    readermLayoutWidth.value = entries[0]?.contentRect.width || element.clientWidth;
+    syncReadermPdfPaneWidth();
+  });
+  readermLayoutResizeObserver.observe(element);
+  syncReadermPdfPaneWidth();
+}, { flush: "post" });
+
+watch(() => [readermPdfCollapsed.value, readermPdfPaneWidth.value, readermLayoutWidth.value] as const, syncReadermPdfPaneWidth);
+
 watch(documents, (items) => {
   const existingIds = new Set(items.map((document) => document.document_id));
-  openDocumentIds.value = openDocumentIds.value.filter((documentId) => existingIds.has(documentId));
+  filterOpenDocumentTabs((documentId) => existingIds.has(documentId));
   if (readermManualPdfDocumentId.value && !existingIds.has(readermManualPdfDocumentId.value)) {
     readermManualPdfDocumentId.value = "";
     readermManualPdfAnchorId.value = "";
@@ -917,31 +1037,17 @@ watch(documents, (items) => {
   void refreshVisibleHealth();
 });
 
-watch(librarySearchQuery, (query) => {
-  if (librarySearchTimer !== null) window.clearTimeout(librarySearchTimer);
-  const clean = query.trim();
-  if (!clean) {
-    librarySearchResults.value = [];
-    librarySearchLoading.value = false;
-    return;
-  }
-  librarySearchLoading.value = true;
-  librarySearchTimer = window.setTimeout(async () => {
-    try {
-      librarySearchResults.value = await window.paperReaderPlus.searchLibrary(clean);
-    } catch (cause) {
-      showNotice(cause instanceof Error ? cause.message : String(cause));
-      librarySearchResults.value = [];
-    } finally {
-      librarySearchLoading.value = false;
-      librarySearchTimer = null;
-    }
-  }, 180);
-});
-
 watch(() => context.value?.document.document_id, () => {
   readermManualPdfDocumentId.value = "";
   readermManualPdfAnchorId.value = "";
+  if (context.value?.document.source_type === "readerm") readermMode.value = defaultReadermEditorMode.value;
+  if (context.value?.document.source_type === "markdown") notesMode.value = defaultMarkdownEditorMode.value;
+  if (context.value?.document.source_type !== "readerm" && context.value?.document.source_type !== "markdown") {
+    notesMode.value = defaultMarkdownEditorMode.value;
+    summaryMode.value = defaultMarkdownEditorMode.value;
+  }
+  cancelReadermOutlineRefresh();
+  void nextTick(refreshReadermOutlineNow);
   markdownAutosavePrimed = false;
   if (markdownAutosaveTimer !== null) {
     window.clearTimeout(markdownAutosaveTimer);
@@ -956,6 +1062,7 @@ watch(() => context.value?.document.document_id, () => {
 watch([noteDraft, summaryDraft], () => {
   cacheCurrentDocumentDraft();
   scheduleMarkdownAutosave();
+  scheduleReadermOutlineRefresh();
 });
 
 watch(readermReferences, (references) => {
@@ -969,9 +1076,14 @@ watch(readermReferences, (references) => {
 });
 
 function handleKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    void saveCurrentDocumentFromShortcut();
+    return;
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
     const target = event.target as HTMLElement | null;
-    if (target?.closest(".readerm-pdf-pane")) return;
+    if (target?.closest(".readerm-pdf-pane, .live-codemirror-editor, .markdown-textarea, .readerm-textarea")) return;
     event.preventDefault();
     searchOpen.value = true;
     return;
@@ -984,6 +1096,18 @@ function handleKeydown(event: KeyboardEvent) {
   activeAnchor.value = null;
   annotationCommentEditor.value = null;
   searchOpen.value = false;
+}
+
+async function saveCurrentDocumentFromShortcut() {
+  const documentId = selectedDocumentId.value;
+  if (!documentId || !context.value) return;
+  try {
+    cacheCurrentDocumentDraft();
+    const saved = await saveDocumentDraft(documentId);
+    if (saved) showNotice(t("app.documentSaved"));
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 function handleGlobalPointerDown(event: PointerEvent) {
@@ -1027,9 +1151,12 @@ function handleMenuAction(action: Parameters<typeof window.paperReaderPlus.onMen
     "translate-selection": () => void translateSelection(),
     "toggle-search": openSearch,
     "toggle-outline": () => { libraryCollapsed.value = false; },
+    "settings-general": () => { activeSettingsPanel.value = "general"; },
+    "settings-markdown": () => { activeSettingsPanel.value = "markdown"; },
     "settings-agent-api": () => { activeSettingsPanel.value = "agent-api"; },
+    "settings-ocr-api": () => { activeSettingsPanel.value = "ocr-api"; },
     "settings-translation-api": () => { activeSettingsPanel.value = "translation-api"; },
-    "settings-network-proxy": () => { activeSettingsPanel.value = "network-proxy"; },
+    "settings-network-proxy": () => { activeSettingsPanel.value = "general"; },
     "settings-file-associations": () => { void openFileAssociationSettings(); },
     "settings-system-prompt": () => { activeSettingsPanel.value = "system-prompt"; },
     "settings-summary-prompt": () => { activeSettingsPanel.value = "summary-prompt"; },
@@ -1044,9 +1171,49 @@ function showNotice(message: string) {
   }, 2600);
 }
 
+function imageSizeIsValid(size: ImageSizeInput) {
+  const width = size.width.trim() ? Number(size.width.trim()) : 0;
+  const height = size.height.trim() ? Number(size.height.trim()) : 0;
+  return Number.isFinite(width) && width >= 0 && width <= 9999
+    && Number.isFinite(height) && height >= 0 && height <= 9999;
+}
+
+function requestImageSize(current: ImageSizeInput) {
+  imageSizeRequest.value?.resolve(null);
+  return new Promise<ImageSizeInput | null>((resolve) => {
+    imageSizeRequest.value = {
+      currentWidth: current.width,
+      currentHeight: current.height,
+      error: "",
+      resolve,
+    };
+  });
+}
+
+function confirmImageSize(value: ImageSizeInput) {
+  if (!imageSizeRequest.value) return;
+  if (!imageSizeIsValid(value)) {
+    imageSizeRequest.value = {
+      ...imageSizeRequest.value,
+      error: t("markdown.imageSizeInvalid"),
+    };
+    return;
+  }
+  const { resolve } = imageSizeRequest.value;
+  imageSizeRequest.value = null;
+  resolve(value);
+}
+
+function cancelImageSize() {
+  const request = imageSizeRequest.value;
+  imageSizeRequest.value = null;
+  request?.resolve(null);
+}
+
 async function loadSettings() {
   settings.value = await window.paperReaderPlus.getSettings();
   setUiLanguage(settings.value.ui_language);
+  setMarkdownFontSize(settings.value.markdown_default_font_size);
   promptTemplates.value = await window.paperReaderPlus.getPromptTemplates();
   fileAssociationStatus.value = await window.paperReaderPlus.getFileAssociationStatus();
 }
@@ -1068,20 +1235,44 @@ async function saveSettings() {
   if (!settings.value) return;
   settings.value = await window.paperReaderPlus.updateSettings(toIpcPlainObject(settings.value));
   setUiLanguage(settings.value.ui_language);
+  setMarkdownFontSize(settings.value.markdown_default_font_size);
   activeSettingsPanel.value = null;
   showNotice(t("app.settingsSaved"));
 }
 
+async function updateSettingsPatch(patch: Partial<Settings>) {
+  if (!settings.value) return;
+  settings.value = await window.paperReaderPlus.updateSettings(toIpcPlainObject({ ...settings.value, ...patch }));
+  setUiLanguage(settings.value.ui_language);
+  setMarkdownFontSize(settings.value.markdown_default_font_size);
+}
+
 async function registerFileAssociations() {
   if (fileAssociationBusy.value) return;
-  fileAssociationBusy.value = true;
+  fileAssociationBusy.value = "all";
   try {
     fileAssociationStatus.value = await window.paperReaderPlus.registerFileAssociations();
     showNotice(t(fileAssociationStatus.value.associated ? "settings.fileAssociationsBoundNotice" : "settings.fileAssociationsPartialNotice"));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
   } finally {
-    fileAssociationBusy.value = false;
+    fileAssociationBusy.value = null;
+  }
+}
+
+async function updateFileAssociation(extension: FileAssociationExtension, associated: boolean) {
+  if (fileAssociationBusy.value) return;
+  fileAssociationBusy.value = extension;
+  try {
+    fileAssociationStatus.value = associated
+      ? await window.paperReaderPlus.unregisterFileAssociation(extension)
+      : await window.paperReaderPlus.registerFileAssociation(extension);
+    const updated = fileAssociationStatus.value.associations.find((item) => item.extension === extension);
+    showNotice(t(updated?.associated ? "settings.fileAssociationBoundNotice" : "settings.fileAssociationUnboundNotice", { extension }));
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  } finally {
+    fileAssociationBusy.value = null;
   }
 }
 
@@ -1134,7 +1325,7 @@ async function handleDocumentContextMenu(document: LibraryDocument) {
     if (selectedDocumentId.value === result.documentId) {
       clearActiveDocumentState();
     }
-    openDocumentIds.value = openDocumentIds.value.filter((id) => id !== result.documentId);
+    closeOpenDocumentTab(result.documentId);
     const { [result.documentId]: _deleted, ...remainingCache } = documentDraftCache.value;
     documentDraftCache.value = remainingCache;
     await refreshDocuments();
@@ -1206,6 +1397,19 @@ async function testTranslationSettings() {
   try {
     const result = await window.paperReaderPlus.testTranslationSettings(toIpcPlainObject(settings.value));
     showNotice(t("app.translationTestOk", { content: result.content || t("app.connected") }));
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  } finally {
+    settingsTesting.value = null;
+  }
+}
+
+async function testSimpleTexOcrSettings() {
+  if (!settings.value || settingsTesting.value) return;
+  settingsTesting.value = "simpletex";
+  try {
+    const result = await window.paperReaderPlus.testSimpleTexOcrSettings(toIpcPlainObject(settings.value));
+    showNotice(t("app.simpletexTestOk", { content: result.content || t("app.connected") }));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
   } finally {
@@ -1329,6 +1533,7 @@ function handleOutlineItemClick(item: { id: string; page_index: number }) {
     scrollToPage(item.page_index);
     return;
   }
+  if (readermWorkspaceRef.value?.scrollToHeading(item.id)) return;
   document
     .querySelector<HTMLElement>(`[data-readerm-heading-id="${CSS.escape(item.id)}"]`)
     ?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -1342,7 +1547,25 @@ function openSearch() {
   searchOpen.value = true;
 }
 
-function handleMarkdownLink(payload: { href: string; event: MouseEvent }) {
+function externalMarkdownUrl(href: string) {
+  if (/^https?:\/\//i.test(href)) return href;
+  if (/^www\./i.test(href)) return `https://${href}`;
+  return "";
+}
+
+function openExternalMarkdownLink(payload: { href: string; event: MouseEvent; force?: boolean }) {
+  const url = externalMarkdownUrl(payload.href);
+  if (!url || (!payload.force && !payload.event.ctrlKey && !payload.event.metaKey)) return false;
+  payload.event.preventDefault();
+  void window.paperReaderPlus.openExternalUrl(url).catch((cause) => {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    showNotice(message.includes("ERR_UNSUPPORTED_EXTERNAL_URL") ? t("liveMarkdown.unsupportedExternalUrl") : message);
+  });
+  return true;
+}
+
+function handleMarkdownLink(payload: { href: string; event: MouseEvent; force?: boolean }) {
+  if (openExternalMarkdownLink(payload)) return;
   const target = parseReaderAnchorHref(payload.href);
   if (!target) return;
   payload.event.preventDefault();
@@ -1353,7 +1576,18 @@ function handleMarkdownLink(payload: { href: string; event: MouseEvent }) {
   }
 }
 
-async function handleReadermLink(payload: { href: string; event: MouseEvent }) {
+async function handleReadermLink(payload: { href: string; event: MouseEvent; force?: boolean }) {
+  if (openExternalMarkdownLink(payload)) return;
+  const documentTarget = parseReaderDocumentHref(payload.href);
+  if (documentTarget) {
+    payload.event.preventDefault();
+    readermManualPdfDocumentId.value = documentTarget.documentId;
+    readermManualPdfAnchorId.value = "";
+    readermPdfSourceView.value = documentTarget.view;
+    readermPdfCollapsed.value = false;
+    readermPdfNavigationKey.value += 1;
+    return;
+  }
   const target = parseReaderAnchorHref(payload.href);
   if (!target) return;
   payload.event.preventDefault();
@@ -1366,6 +1600,7 @@ async function handleReadermLink(payload: { href: string; event: MouseEvent }) {
   if (!reference) {
     readermManualPdfDocumentId.value = target.documentId;
     readermManualPdfAnchorId.value = target.anchorId;
+    readermPdfSourceView.value = "pdf";
     readermPdfCollapsed.value = false;
     showNotice(t("readerm.openingUnindexedReference"));
     return;
@@ -1373,6 +1608,7 @@ async function handleReadermLink(payload: { href: string; event: MouseEvent }) {
   activeReadermReferenceId.value = reference.reference_id;
   readermManualPdfDocumentId.value = target.documentId;
   readermManualPdfAnchorId.value = target.anchorId;
+  readermPdfSourceView.value = "pdf";
   readermPdfCollapsed.value = false;
   readermPdfNavigationKey.value += 1;
 }
@@ -1380,6 +1616,7 @@ async function handleReadermLink(payload: { href: string; event: MouseEvent }) {
 function selectReadermReference(reference: ReadermReference) {
   readermManualPdfDocumentId.value = "";
   readermManualPdfAnchorId.value = "";
+  readermPdfSourceView.value = "pdf";
   activeReadermReferenceId.value = reference.reference_id;
   readermPdfCollapsed.value = false;
   readermPdfNavigationKey.value += 1;
@@ -1391,6 +1628,12 @@ function selectReadermReference(reference: ReadermReference) {
 function selectReadermHistoryPdf(documentId: string) {
   readermManualPdfDocumentId.value = documentId;
   readermManualPdfAnchorId.value = "";
+  readermPdfSourceView.value = "pdf";
+}
+
+function openReadermCollapsedSource(view: ReaderDocumentView) {
+  readermPdfSourceView.value = view;
+  readermPdfCollapsed.value = false;
 }
 
 function refreshReadermContext(nextContext: DocumentContext) {
@@ -1406,19 +1649,27 @@ function refreshReadermContext(nextContext: DocumentContext) {
   void refreshDocumentHealth(nextContext.document.document_id);
 }
 
-function captureReadermRegion(selection?: { start: number; end: number }) {
+function captureReadermRegion(payload?: { start: number; end: number } | { selection?: { start: number; end: number }; kind?: "image" | "formula" }) {
   if (readermPdfCollapsed.value) readermPdfCollapsed.value = false;
   if (readermMode.value === "preview") readermMode.value = "live";
-  readermCaptureRequest.value = { requestId: Date.now(), selection };
+  const selection = payload && "selection" in payload ? payload.selection : payload as { start: number; end: number } | undefined;
+  const kind = payload && "kind" in payload ? payload.kind : "image";
+  readermCaptureRequest.value = { requestId: Date.now(), selection: selection ?? getCurrentReadermInsertionSelection(), kind };
 }
 
 function clampReadermPdfPaneWidth(width: number) {
   const minMarkdownWidth = 500;
-  const minPdfWidth = 520;
+  const minPdfWidth = 420;
   const maxPdfWidth = 900;
-  const layoutWidth = document.querySelector<HTMLElement>(".readerm-layout")?.clientWidth || 1200;
+  const layoutWidth = readermLayoutWidth.value || readermLayoutRef.value?.clientWidth || 1200;
   const maxByLayout = Math.max(minPdfWidth, layoutWidth - minMarkdownWidth - readermResizeHandleWidth);
   return Math.min(maxPdfWidth, Math.max(minPdfWidth, Math.min(width, maxByLayout)));
+}
+
+function syncReadermPdfPaneWidth() {
+  if (readermPdfCollapsed.value) return;
+  const targetWidth = clampReadermPdfPaneWidth(readermPdfPaneWidth.value);
+  if (targetWidth !== readermPdfPaneWidth.value) readermPdfPaneWidth.value = targetWidth;
 }
 
 function startReadermResize(event: PointerEvent) {
@@ -1473,6 +1724,7 @@ function focusAnchor(anchorId: string) {
       v-model:search-query="librarySearchQuery"
       :search-results="librarySearchResults"
       :search-loading="librarySearchLoading"
+      :history-readerp-link-view="settings?.history_readerp_link_view || 'pdf'"
       @import-pdf="importPdf"
       @import-arxiv="arxivImportOpen = true"
       @create-empty-readerm="createEmptyReaderm"
@@ -1480,6 +1732,7 @@ function focusAnchor(anchorId: string) {
       @open-document="openDocument"
       @document-context-menu="handleDocumentContextMenu"
       @delete-document="deleteDocument"
+      @clear-history="clearHistory"
       @open-search-result="openLibrarySearchResult"
       @scroll-to-page="scrollToPage"
       @outline-item-click="handleOutlineItemClick"
@@ -1521,12 +1774,14 @@ function focusAnchor(anchorId: string) {
 
       <template v-else>
         <section
+          ref="readermLayoutRef"
           v-if="context.document.source_type === 'readerm'"
           class="readerm-layout"
           :class="{ 'pdf-collapsed': readermPdfCollapsed }"
           :style="readermLayoutStyle"
         >
           <ReadermWorkspace
+            ref="readermWorkspaceRef"
             v-model:title-draft="titleDraft"
             v-model:markdown="noteDraft"
             v-model:mode="readermMode"
@@ -1535,6 +1790,7 @@ function focusAnchor(anchorId: string) {
             :document-id="context.document.document_id"
             :references="readermReferences"
             :active-reference-id="activeReadermReference?.reference_id || ''"
+            :settings="settings"
             @edit-title="editingTitle = true"
             @save-title="saveTitle"
             @save="saveReaderm"
@@ -1543,6 +1799,7 @@ function focusAnchor(anchorId: string) {
             @paste-image="pasteImageAsset({ target: 'notes', ...$event })"
             @resize-image="resizeMarkdownAssetImage({ target: 'notes', assetPath: $event.assetPath })"
             @link-click="handleReadermLink"
+            @update-settings="updateSettingsPatch"
           />
           <button
             v-if="!readermPdfCollapsed"
@@ -1554,30 +1811,82 @@ function focusAnchor(anchorId: string) {
           />
           <PdfReaderPane
             v-if="!readermPdfCollapsed"
-            v-model:note-draft="noteDraft"
             :document-id="readermPdfDocumentId"
             :anchor-id="readermPdfAnchorId"
             :navigation-key="readermPdfNavigationKey"
+            :source-view="readermPdfSourceView"
             :history-documents="historyPdfDocuments"
             :readerm-document-id="context.document.document_id"
+            :get-readerm-markdown="getCurrentReadermMarkdown"
+            :get-readerm-insertion-selection="getCurrentReadermInsertionSelection"
             :capture-request="readermCaptureRequest"
             :settings="settings"
+            @update-readerm-markdown="noteDraft = $event"
             @translation-modal="translationModal = $event"
             @notice="showNotice"
             @select-document="selectReadermHistoryPdf"
+            @update-source-view="readermPdfSourceView = $event"
             @open-document="openDocument"
+            @link-click="handleReadermLink"
             @readerm-indexed="refreshReadermContext"
+            @collapse="readermPdfCollapsed = true"
           />
-          <button
+          <nav
             v-else
-            type="button"
             class="readerm-pdf-collapsed"
-            :title="t('readerm.expandPdf')"
-            @click="readermPdfCollapsed = false"
+            :aria-label="t('readerm.expandPdf')"
           >
-            PDF
-          </button>
+            <div class="readerm-pdf-collapsed-header">
+              <button type="button" class="right-panel-toggle" :title="t('readerm.expandPdf')" :aria-label="t('readerm.expandPdf')" @click="readermPdfCollapsed = false">
+                <PanelRightOpen :size="18" />
+              </button>
+            </div>
+            <button
+              type="button"
+              class="readerm-pdf-collapsed-tab"
+              :class="{ active: readermPdfSourceView === 'pdf' }"
+              :title="t('readerm.sourcePdf')"
+              @click="openReadermCollapsedSource('pdf')"
+            >
+              PDF
+            </button>
+            <button
+              type="button"
+              class="readerm-pdf-collapsed-tab"
+              :class="{ active: readermPdfSourceView === 'markdown' }"
+              :title="t('readerm.sourceMarkdown')"
+              @click="openReadermCollapsedSource('markdown')"
+            >
+              MD
+            </button>
+            <button
+              type="button"
+              class="readerm-pdf-collapsed-tab"
+              :class="{ active: readermPdfSourceView === 'summary' }"
+              :title="t('readerm.sourceSummary')"
+              @click="openReadermCollapsedSource('summary')"
+            >
+              SUM
+            </button>
+          </nav>
         </section>
+
+        <MarkdownWorkspace
+          v-else-if="context.document.source_type === 'markdown'"
+          v-model:title-draft="titleDraft"
+          v-model:markdown="noteDraft"
+          v-model:mode="notesMode"
+          :title="documentTitle"
+          :editing-title="editingTitle"
+          :document-id="context.document.document_id"
+          :settings="settings"
+          @edit-title="editingTitle = true"
+          @save-title="saveTitle"
+          @save="saveNote"
+          @upgrade="upgradeMarkdownToReaderm"
+          @link-click="handleMarkdownLink"
+          @update-settings="updateSettingsPatch"
+        />
 
         <ReaderLayout v-else v-model:collapsed="rightPanelCollapsed" v-model:right-panel-width="rightPanelWidth" v-model:active-tab="rightPanelTab">
           <template #pdf>
@@ -1613,6 +1922,7 @@ function focusAnchor(anchorId: string) {
               :author-preview="authorPreview"
               :dictionary-entries="dictionaryEntries"
               :dictionary-preview="dictionaryPreview"
+              :capture-image-scale="settings?.capture_image_scale || 2"
               :can-open-annotations="!context.document.readerp_path"
               @edit-title="editingTitle = true"
               @save-title="saveTitle"
@@ -1664,6 +1974,7 @@ function focusAnchor(anchorId: string) {
           </template>
           <template #right>
             <ReaderSidePanel
+              ref="readerSidePanelRef"
               v-model:active-tab="rightPanelTab"
               v-model:annotation-filters="annotationFilters"
               v-model:notes-mode="notesMode"
@@ -1683,6 +1994,7 @@ function focusAnchor(anchorId: string) {
               :active-symbol="activeSymbol"
               :symbol-refresh-progress="symbolRefreshProgress"
               :document-id="context.document.document_id"
+              :settings="settings"
               @collapse="rightPanelCollapsed = true"
               @save-note="saveNote"
               @save-summary="saveSummary"
@@ -1700,12 +2012,13 @@ function focusAnchor(anchorId: string) {
               @set-symbol-anchor="setSymbolAnchor"
               @delete-symbol="deleteSymbolDefinition"
               @refresh-symbols="refreshSymbols"
+              @update-settings="updateSettingsPatch"
             />
           </template>
         </ReaderLayout>
 
         <SelectionToolbar
-          v-if="context.document.source_type !== 'readerm'"
+          v-if="context.document.source_type !== 'readerm' && context.document.source_type !== 'markdown'"
           v-model:color="annotationColor"
           :selected-text="selectedText"
           :position="selectionState?.position || null"
@@ -1719,7 +2032,7 @@ function focusAnchor(anchorId: string) {
         />
 
         <section
-          v-if="context.document.source_type !== 'readerm' && annotationCommentEditor"
+          v-if="context.document.source_type !== 'readerm' && context.document.source_type !== 'markdown' && annotationCommentEditor"
           class="annotation-comment-popover"
           :style="annotationCommentEditorStyle"
           @pointerdown.stop
@@ -1772,7 +2085,7 @@ function focusAnchor(anchorId: string) {
         </section>
 
         <TableSheetModal
-          v-if="context.document.source_type !== 'readerm'"
+          v-if="context.document.source_type !== 'readerm' && context.document.source_type !== 'markdown'"
           :sheet="tableSheet"
           @close="tableSheet = null"
           @export-csv="exportTableCsv"
@@ -1801,7 +2114,18 @@ function focusAnchor(anchorId: string) {
         @save="saveSettings"
         @test-agent="testAgentSettings"
         @test-translation="testTranslationSettings"
+        @test-simple-tex-ocr="testSimpleTexOcrSettings"
         @register-file-associations="registerFileAssociations"
+        @update-file-association="updateFileAssociation"
+      />
+
+      <ImageSizeModal
+        v-if="imageSizeRequest"
+        :current-width="imageSizeRequest.currentWidth"
+        :current-height="imageSizeRequest.currentHeight"
+        :error="imageSizeRequest.error"
+        @confirm="confirmImageSize"
+        @cancel="cancelImageSize"
       />
 
       <TranslationResultModal

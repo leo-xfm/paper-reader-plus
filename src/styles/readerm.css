@@ -7,6 +7,7 @@
 }
 
 .readerm-workspace {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -80,6 +81,12 @@
   height: var(--size-control-md);
 }
 
+.readerm-actions > button.active {
+  border-color: #c7d7fb;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
 .readerm-reference-strip {
   display: flex;
   gap: 8px;
@@ -127,14 +134,46 @@
   color: var(--color-text-muted);
 }
 
+.readerm-editor-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.readerm-editor-stage.split .readerm-textarea,
+.readerm-editor-stage.split .readerm-split-preview {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.readerm-editor-stage.split .readerm-split-preview {
+  border-left: 1px solid var(--color-border);
+}
+
+.readerm-editor-stage.split.bottom {
+  flex-direction: column;
+}
+
+.readerm-editor-stage.split.bottom .readerm-textarea,
+.readerm-editor-stage.split.bottom .readerm-split-preview {
+  flex-basis: 50%;
+}
+
+.readerm-editor-stage.split.bottom .readerm-split-preview {
+  border-left: 0;
+  border-top: 1px solid var(--color-border);
+}
+
 .readerm-textarea {
   flex: 1;
   min-height: 0;
   resize: none;
   border: 0;
   padding: 18px 22px;
-  line-height: 1.6;
-  font-size: var(--font-size-body);
+  line-height: var(--markdown-line-height, 1.6);
+  font-family: var(--markdown-code-font-family, Consolas, "SFMono-Regular", "Liberation Mono", Menlo, monospace);
+  font-size: calc(var(--markdown-editor-font-size, var(--font-size-body)) * var(--markdown-code-font-scale, 0.86));
 }
 
 .readerm-preview {
@@ -142,6 +181,45 @@
   min-height: 0;
   overflow: auto;
   padding: 20px 28px;
+  font-size: var(--markdown-editor-font-size, 15px);
+}
+
+.readerm-search-popover {
+  position: absolute;
+  top: 70px;
+  right: 18px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-popover);
+}
+
+.readerm-search-popover input {
+  width: 240px;
+  height: var(--size-control-md);
+  padding: 0 9px;
+}
+
+.readerm-search-popover span {
+  min-width: 42px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+  text-align: center;
+}
+
+.readerm-search-match {
+  border-radius: 3px;
+  background: #fef08a;
+  color: inherit;
+}
+
+.readerm-search-match.active {
+  background: #fbbf24;
 }
 
 .readerm-pdf-pane {
@@ -157,6 +235,18 @@
   min-height: 0;
 }
 
+.readerm-markdown-source {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #fff;
+}
+
+.readerm-markdown-source-preview {
+  min-height: 100%;
+  padding: 22px 28px;
+}
+
 .readerm-pdf-sourcebar {
   min-height: 52px;
   display: flex;
@@ -169,14 +259,15 @@
 
 .readerm-pdf-sourcebar label {
   flex: 0 0 auto;
-  min-width: 72px;
+  min-width: 52px;
   color: #2f5f9f;
   font-size: var(--font-size-small);
   font-weight: 700;
   letter-spacing: 0;
 }
 
-.readerm-pdf-open-source {
+.readerm-pdf-open-source,
+.readerm-pdf-collapse {
   flex: 0 0 auto;
   width: var(--size-control-md);
   height: var(--size-control-md);
@@ -185,7 +276,12 @@
   color: #2f5f9f;
 }
 
-.readerm-pdf-open-source:hover:not(:disabled) {
+.readerm-pdf-collapse {
+  margin-left: auto;
+}
+
+.readerm-pdf-open-source:hover:not(:disabled),
+.readerm-pdf-collapse:hover {
   border-color: #8fb2e5;
   background: #eef5ff;
 }
@@ -202,7 +298,44 @@
   border: 0;
   border-left: 1px solid var(--color-border);
   border-radius: 0;
-  background: var(--color-panel);
-  writing-mode: vertical-rl;
-  color: var(--color-text-muted);
+  background: var(--color-paper);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.readerm-pdf-collapsed-header {
+  height: var(--rail-header-height);
+  min-height: var(--rail-header-height);
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.readerm-pdf-collapsed-tab {
+  width: var(--rail-button-size);
+  height: var(--rail-button-size);
+  min-height: var(--rail-button-size);
+  margin: 10px auto;
+  padding: 0;
+  border-radius: var(--radius-card);
+  color: var(--color-text-soft);
+  background: transparent;
+  border-color: transparent;
+  font-weight: 720;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.readerm-pdf-collapsed-tab + .readerm-pdf-collapsed-tab {
+  margin-top: 0;
+}
+
+.readerm-pdf-collapsed-tab:hover,
+.readerm-pdf-collapsed-tab.active {
+  background: var(--color-primary-soft);
+  border-color: #c7d7fb;
+  color: var(--color-primary);
 }

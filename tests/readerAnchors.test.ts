@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildImageRegionAnchorCreateRequest, buildReaderAnchorHref, parseReaderAnchorHref } from "@/services/ReaderAnchorService";
+import { buildImageRegionAnchorCreateRequest, buildReaderAnchorHref, parseReaderAnchorHref, parseReaderDocumentHref } from "@/services/ReaderAnchorService";
 
 describe("ReaderAnchorService", () => {
   it("round trips reader anchor hrefs", () => {
@@ -31,6 +31,24 @@ describe("ReaderAnchorService", () => {
     expect(parseReaderAnchorHref("paper-reader-plus://document/doc-1?anchor=anc-1")).toEqual({
       documentId: "doc-1",
       anchorId: "anc-1",
+    });
+  });
+
+  it("parses reader document links", () => {
+    expect(parseReaderDocumentHref("readerp://document/doc-1")).toEqual({
+      documentId: "doc-1",
+      sourceType: "readerp",
+      view: "pdf",
+    });
+    expect(parseReaderDocumentHref("readerm://document/doc%202?view=summary")).toEqual({
+      documentId: "doc 2",
+      sourceType: "readerm",
+      view: "summary",
+    });
+    expect(parseReaderDocumentHref("readerp://document/doc-3?source=markdown")).toEqual({
+      documentId: "doc-3",
+      sourceType: "readerp",
+      view: "markdown",
     });
   });
 

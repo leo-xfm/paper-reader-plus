@@ -2,9 +2,10 @@ import { nextTick, type ComputedRef, type Ref } from "vue";
 import type { RightPanelTab } from "@/components/ReaderPanelTabs";
 import type { PdfTextItem } from "@/pdf/pdfTypes";
 import { toIpcPlainObject } from "@/services/IpcPayloadService";
-import { buildAnchorCreateRequest, buildMarkdownQuote, type ReaderSelection } from "@/services/ReaderAnchorService";
+import { buildAnchorCreateRequest, type ReaderSelection } from "@/services/ReaderAnchorService";
 import { buildAnnotationCreateRequest, type AnnotationToolMode } from "@/services/ReaderAnnotationService";
-import type { Anchor, Annotation, AnnotationType, DocumentContext, RectPct } from "@/types";
+import { buildTemplatedMarkdownQuote } from "@/services/QuoteTemplateService";
+import type { Anchor, Annotation, AnnotationType, DocumentContext, RectPct, Settings } from "@/types";
 
 type TextSelection = ReaderSelection & { position: { left: number; top: number; bottom?: number } };
 type AnnotationCommentEditor = {
@@ -30,6 +31,8 @@ type UseAnnotationActionsOptions = {
   annotationCommentTextarea: Ref<HTMLTextAreaElement | null>;
   noteDraft: Ref<string>;
   notesMode: Ref<"edit" | "live" | "preview">;
+  settings: Ref<Settings | null> | ComputedRef<Settings | null>;
+  getNoteInsertionSelection?: () => { start: number; end: number } | undefined;
   rightPanelTab: Ref<RightPanelTab>;
   rightPanelCollapsed: Ref<boolean>;
   pageTextItems: Ref<Record<number, PdfTextItem[]>>;
@@ -197,7 +200,12 @@ export function useAnnotationActions(options: UseAnnotationActionsOptions) {
       options.showNotice("Select text first");
       return;
     }
-    const quote = buildMarkdownQuote(anchor, options.selectionState.value?.text);
+    const quote = buildTemplatedMarkdownQuote({
+      anchor,
+      document: options.context.value?.document,
+      text: options.selectionState.value?.text,
+      template: options.settings.value?.copy_quote_template,
+    });
     await navigator.clipboard.writeText(quote);
     options.showNotice("Quote copied");
   }
@@ -208,11 +216,21 @@ export function useAnnotationActions(options: UseAnnotationActionsOptions) {
       options.showNotice("Select text first");
       return;
     }
-    const quote = `\n\n${buildMarkdownQuote(anchor)}`;
-    options.noteDraft.value = `${options.noteDraft.value}${quote}`;
+    const quote = buildTemplatedMarkdownQuote({
+      anchor,
+      document: options.context.value?.document,
+      template: options.settings.value?.quote_to_note_template,
+    });
+    options.noteDraft.value = insertMarkdownAt(options.noteDraft.value, quote, options.getNoteInsertionSelection?.());
     options.rightPanelCollapsed.value = false;
     options.rightPanelTab.value = "notes";
     options.notesMode.value = "live";
+  }
+
+  function insertMarkdownAt(value: string, markdown: string, selection?: { start: number; end: number }) {
+    const insertion = `\n\n${markdown}\n\n`;
+    if (!selection) return `${value}${insertion}`;
+    return `${value.slice(0, selection.start)}${insertion}${value.slice(selection.end)}`;
   }
 
   async function updateAnnotation(annotation: Annotation, patch: { type?: AnnotationType; color?: string; comment?: string; tags?: string[] }) {

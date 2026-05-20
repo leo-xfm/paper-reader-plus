@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Check, ChevronDown } from "lucide-vue-next";
+import { Check, ChevronDown, type LucideIcon } from "lucide-vue-next";
 import { useDropdownPopover } from "@/composables/useDropdownPopover";
 
 export type DropdownOption = {
   value: string;
   label: string;
+  icon?: LucideIcon;
   disabled?: boolean;
+  style?: Record<string, string>;
 };
 
 const props = withDefaults(defineProps<{
   modelValue: string;
-  options: DropdownOption[];
+  options: readonly DropdownOption[];
   title?: string;
   placeholder?: string;
   menuClass?: string;
@@ -36,6 +38,8 @@ const {
 
 const selectedOption = computed(() => props.options.find((option) => option.value === props.modelValue) || null);
 const triggerLabel = computed(() => selectedOption.value?.label || props.placeholder || "");
+const triggerIcon = computed(() => selectedOption.value?.icon || null);
+const hasOptionIcons = computed(() => props.options.some((option) => Boolean(option.icon)));
 
 function selectOption(option: DropdownOption) {
   if (option.disabled) return;
@@ -54,16 +58,18 @@ function selectOption(option: DropdownOption) {
       :aria-expanded="open"
       @click="toggleOpen"
     >
-      <span class="ui-dropdown-label">{{ triggerLabel }}</span>
+      <component v-if="triggerIcon" :is="triggerIcon" :size="15" class="ui-dropdown-option-icon" />
+      <span class="ui-dropdown-label" :style="selectedOption?.style">{{ triggerLabel }}</span>
       <ChevronDown :size="15" class="ui-dropdown-chevron" />
     </button>
     <Teleport to="body">
       <div
         v-if="open"
         class="ui-dropdown-menu"
-        :class="menuClass"
+        :class="[menuClass, { 'has-option-icons': hasOptionIcons }]"
         :style="menuStyle"
         role="listbox"
+        @wheel.stop
       >
         <button
           v-for="option in options"
@@ -77,7 +83,8 @@ function selectOption(option: DropdownOption) {
           @click="selectOption(option)"
         >
           <Check :size="16" class="ui-dropdown-check" />
-          <span>{{ option.label }}</span>
+          <component v-if="option.icon" :is="option.icon" :size="15" class="ui-dropdown-option-icon" />
+          <span :style="option.style">{{ option.label }}</span>
         </button>
       </div>
     </Teleport>

@@ -2,10 +2,10 @@
 import { computed } from "vue";
 import { useI18n } from "@/i18n";
 import type { I18nKey } from "@/i18n/messages";
-import type { MarkdownEditorMode } from "@/types";
+import type { MarkdownEditorMode, ReadermEditorMode } from "@/types";
 
 const props = defineProps<{
-  modelValue: MarkdownEditorMode;
+  modelValue: ReadermEditorMode;
 }>();
 
 const emit = defineEmits<{
@@ -20,7 +20,8 @@ const options: Array<{ value: MarkdownEditorMode; labelKey: I18nKey }> = [
   { value: "preview", labelKey: "common.preview" },
 ];
 
-const activeIndex = computed(() => Math.max(0, options.findIndex((option) => option.value === props.modelValue)));
+const normalizedModelValue = computed<MarkdownEditorMode>(() => props.modelValue === "edit-preview" ? "edit" : props.modelValue);
+const activeIndex = computed(() => Math.max(0, options.findIndex((option) => option.value === normalizedModelValue.value)));
 </script>
 
 <template>
@@ -31,9 +32,9 @@ const activeIndex = computed(() => Math.max(0, options.findIndex((option) => opt
       :key="option.value"
       type="button"
       class="segmented-mode-option"
-      :class="{ active: modelValue === option.value }"
+      :class="{ active: normalizedModelValue === option.value }"
       role="tab"
-      :aria-selected="modelValue === option.value"
+      :aria-selected="normalizedModelValue === option.value"
       @click="emit('update:modelValue', option.value)"
     >
       {{ t(option.labelKey) }}

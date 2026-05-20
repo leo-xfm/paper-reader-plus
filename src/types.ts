@@ -14,6 +14,7 @@ export type LibraryDocument = {
   source_type?: "pdf" | "markdown" | "readerp" | "readerm";
   readerp_path?: string;
   package_path?: string;
+  source_path?: string;
   latex_path?: string;
   latex_file_name?: string;
   created_at: string;
@@ -259,13 +260,36 @@ export type Settings = {
   research_area: string;
   reader_prompt: string;
   summary_template: string;
+  copy_quote_template: string;
+  quote_to_note_template: string;
+  quote_to_readerm_template: string;
   summary_source: SummarySourceMode;
+  summary_text_char_limit: number;
   summary_figure_attachment_limit: number;
+  capture_image_scale: number;
+  markdown_default_font_size: number;
+  markdown_line_height: number;
+  markdown_code_font_scale: number;
+  markdown_code_line_height: number;
+  markdown_font_family: string;
+  markdown_code_font_family: string;
+  markdown_code_line_numbers: boolean;
+  markdown_code_ligatures: boolean;
+  markdown_highlight_enabled: boolean;
+  markdown_highlight_color: string;
+  markdown_math_enabled: boolean;
+  markdown_html_live_enabled: boolean;
+  markdown_default_editor_mode: MarkdownEditorMode;
+  readerm_edit_split_default: boolean;
+  readerm_preview_position: ReadermPreviewPosition;
+  history_readerp_link_view: ReaderDocumentViewMode;
   ai_send_notes_context: boolean;
   ai_send_summary_context: boolean;
   ai_send_annotations_context: boolean;
   ai_send_loaded_pdf_text: boolean;
   ai_send_figure_attachments: boolean;
+  simpletex_ocr_token: string;
+  simpletex_ocr_enabled: boolean;
   translator_mode: "ai" | "api";
   translation_provider: "google" | "baidu";
   translator_api_url: string;
@@ -280,8 +304,11 @@ export type Settings = {
 };
 
 export type SummarySourceMode = "pdf-direct" | "pdf-extractor" | "latex";
+export type ReaderDocumentViewMode = "pdf" | "markdown" | "summary";
+export type ReadermPreviewPosition = "right" | "bottom";
 
 export type MarkdownEditorMode = "edit" | "live" | "preview";
+export type ReadermEditorMode = MarkdownEditorMode | "edit-preview";
 
 export type AiTextContentPart = {
   type: "text";
@@ -350,10 +377,12 @@ export type FileAssociationStatus = {
   supported: boolean;
   associated: boolean;
   associations: Array<{
-    extension: ".readerp" | ".readerm";
+    extension: FileAssociationExtension;
     associated: boolean;
   }>;
 };
+
+export type FileAssociationExtension = ".readerp" | ".readerm" | ".md";
 
 export type SymbolDefinition = {
   symbol: string;

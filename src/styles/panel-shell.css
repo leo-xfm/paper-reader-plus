@@ -20,7 +20,7 @@
 }
 
 .panel-header strong {
-  color: var(--color-text);
+  color: var(--color-primary);
   font-size: 15px;
   font-weight: 720;
 }
