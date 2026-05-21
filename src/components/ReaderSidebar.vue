@@ -153,7 +153,7 @@ async function copyDocumentMarkdownLink(document: LibraryDocument) {
             :class="{ active: selectedDocumentId === document.document_id }"
             @contextmenu.prevent.stop="emit('documentContextMenu', document)"
           >
-            <button type="button" class="library-item-open" @click="emit('openDocument', document.document_id)">
+            <button type="button" class="library-item-open" :title="document.title" @click="emit('openDocument', document.document_id)">
               <span><i class="health-dot" :class="healthClass(document.document_id)" />{{ document.title }}</span>
               <small>{{ document.file_name }}</small>
             </button>

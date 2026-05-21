@@ -2,7 +2,6 @@ import { Decoration, WidgetType } from "@codemirror/view";
 import type { EditorSelection, Range, Text } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 import { isMermaidFenceInfo } from "@/services/MermaidRenderService";
-import { selectionTouchesLineRange } from "../util/selection.js";
 import { firstChildNamed, lastChildNamed } from "../util/tree.js";
 import { HIDE, pushAtomicRange } from "./shared.js";
 import { MermaidBlockWidget } from "../widgets/mermaid.js";
@@ -89,6 +88,8 @@ function decorateMermaidFencedCode(
         );
       }
     }
+    if (openMark) pushAtomicRange(ranges, atomicRanges, HIDE, openMark.from, openMark.to);
+    if (closeMark) pushAtomicRange(ranges, atomicRanges, HIDE, closeMark.from, closeMark.to);
     ranges.push(
       Decoration.widget({
         widget: new MermaidBlockWidget(source, node.from, node.to, sourceLineCount, true, labels.mermaidDiagram),
@@ -124,14 +125,15 @@ export function decorateFencedCode(
   const lineCount = endLine.number - startLine.number + 1;
   const openMark = firstChildNamed(node, "CodeMark");
   const closeMark = lastChildNamed(node, "CodeMark");
+  if (!closeMark || closeMark === openMark) return;
+  const openLine = openMark ? doc.lineAt(openMark.from) : startLine;
+  if (selectionTouches(sel, openLine.from, openLine.to)) return;
   if (labels && isMermaidFenceInfo(fencedCodeInfo(node, doc, openMark))) {
     decorateMermaidFencedCode(ranges, atomicRanges, node, doc, sel, labels, openMark, closeMark);
     return;
   }
   const contentStartLineNumber = openMark ? doc.lineAt(openMark.from).number + 1 : startLine.number + 1;
   const contentEndLineNumber = closeMark && closeMark !== openMark ? doc.lineAt(closeMark.from).number - 1 : endLine.number;
-  const revealed = selectionTouchesLineRange(doc, sel, node.from, node.to);
-
   for (let n = startLine.number; n <= endLine.number; n++) {
     const line = doc.line(n);
     const deco =
@@ -151,15 +153,11 @@ export function decorateFencedCode(
     }
   }
 
-  if (revealed) return;
-
   if (openMark) {
-    const openLine = doc.lineAt(openMark.from);
-    pushAtomicRange(ranges, atomicRanges, HIDE, openLine.from, openLine.to);
+    pushAtomicRange(ranges, atomicRanges, HIDE, openMark.from, openMark.to);
   }
 
-  if (closeMark && closeMark !== openMark) {
-    const closeLine = doc.lineAt(closeMark.from);
-    pushAtomicRange(ranges, atomicRanges, HIDE, closeLine.from, closeLine.to);
+  if (closeMark) {
+    pushAtomicRange(ranges, atomicRanges, HIDE, closeMark.from, closeMark.to);
   }
 }

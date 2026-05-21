@@ -8,7 +8,7 @@ Paper Reader Plus is a desktop workspace for reading, annotating, translating, a
 
 ## Version
 
-Current app version: `0.2.0`
+Current app version: `0.2.2`
 
 Package manifest versions: ReaderP `1`, ReaderM `1`
 

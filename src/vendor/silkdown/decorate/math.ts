@@ -11,6 +11,10 @@ interface MathRange {
   to: number;
   contentFrom: number;
   contentTo: number;
+  openMarkFrom?: number;
+  openMarkTo?: number;
+  closeMarkFrom?: number;
+  closeMarkTo?: number;
   display: boolean;
 }
 
@@ -73,7 +77,7 @@ function scanLineMath(text: string, lineFrom: number): MathRange[] {
   return ranges;
 }
 
-function scanBlockMath(doc: Text, fromLine: number, toLine: number, sel?: EditorSelection): MathRange[] {
+function scanBlockMath(doc: Text, fromLine: number, toLine: number): MathRange[] {
   const ranges: MathRange[] = [];
   let open: { from: number; contentFrom: number } | null = null;
   for (let number = fromLine; number <= toLine; number++) {
@@ -82,7 +86,6 @@ function scanBlockMath(doc: Text, fromLine: number, toLine: number, sel?: Editor
     if (trimmed !== "$$") continue;
     const markFrom = line.from + line.text.indexOf("$$");
     if (!open) {
-      if (sel && selectionTouches(sel, markFrom, markFrom + 2)) continue;
       open = { from: markFrom, contentFrom: markFrom + 2 };
     } else {
       ranges.push({
@@ -90,6 +93,10 @@ function scanBlockMath(doc: Text, fromLine: number, toLine: number, sel?: Editor
         to: markFrom + 2,
         contentFrom: open.contentFrom,
         contentTo: markFrom,
+        openMarkFrom: open.from,
+        openMarkTo: open.from + 2,
+        closeMarkFrom: markFrom,
+        closeMarkTo: markFrom + 2,
         display: true,
       });
       open = null;
@@ -104,7 +111,7 @@ export function decorateBlockMath(
   sel: EditorSelection,
   labels: SilkdownLiveBlockLabels,
 ): void {
-  const mathRanges = scanBlockMath(doc, 1, doc.lines, sel);
+  const mathRanges = scanBlockMath(doc, 1, doc.lines);
   for (const range of mathRanges) {
     if (selectionTouches(sel, range.from, range.to)) {
       const latex = doc.sliceString(range.contentFrom, range.contentTo).trim();
@@ -121,6 +128,12 @@ export function decorateBlockMath(
             }).range(line.from),
           );
         }
+      }
+      if (typeof range.openMarkFrom === "number" && typeof range.openMarkTo === "number") {
+        ranges.push(HIDE.range(range.openMarkFrom, range.openMarkTo));
+      }
+      if (typeof range.closeMarkFrom === "number" && typeof range.closeMarkTo === "number") {
+        ranges.push(HIDE.range(range.closeMarkFrom, range.closeMarkTo));
       }
       ranges.push(
         Decoration.widget({
@@ -147,7 +160,7 @@ export function decorateMath(
 ): void {
   const fromLine = doc.lineAt(Math.max(0, from)).number;
   const toLine = doc.lineAt(Math.min(doc.length, to)).number;
-  const blockMathRanges: MathRange[] = scanBlockMath(doc, 1, doc.lines, sel);
+  const blockMathRanges: MathRange[] = scanBlockMath(doc, 1, doc.lines);
   const mathRanges: MathRange[] = [];
 
   for (let number = fromLine; number <= toLine; number++) {

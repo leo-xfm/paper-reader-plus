@@ -195,6 +195,8 @@ const imageResizeMenu = ref({
   submenuLeft: false,
 });
 const mathPreviewRoot = ref<HTMLDivElement | null>(null);
+const mathToolbarRoot = ref<HTMLDivElement | null>(null);
+const mathToolbarClearance = ref(98);
 const mathPreview = ref({
   open: false,
   top: 0,
@@ -553,6 +555,7 @@ const MATH_GROUP_PREVIEW_LATEX: Record<string, string> = {
 };
 const assetUrlCache = createLruStringCache(50);
 let view: EditorView | null = null;
+let mathToolbarResizeObserver: ResizeObserver | null = null;
 let syncingFromEditor = false;
 let isComposing = false;
 let assetResolveTimer: number | null = null;
@@ -752,6 +755,95 @@ function autoPairBracketInput() {
       selection: selected
         ? { anchor: selection.from + insertedText.length, head: selection.to + insertedText.length }
         : { anchor: selection.from + insertedText.length },
+      scrollIntoView: true,
+    };
+  });
+}
+
+function rangesIntersect(leftFrom: number, leftTo: number, rightFrom: number, rightTo: number) {
+  return leftFrom < rightTo && leftTo > rightFrom;
+}
+
+function positionInsideRange(position: number, from: number, to: number) {
+  return position > from && position < to;
+}
+
+function protectedBlockMarkerRanges(source: string) {
+  return [
+    ...findBlockMathRanges(source).flatMap((range) => [
+      { from: range.openMarkStart, to: range.openMarkEnd },
+      { from: range.closeMarkStart, to: range.closeMarkEnd },
+    ]),
+    ...findFencedCodeRanges(source).flatMap((range) => [
+      { from: range.openMarkStart, to: range.openMarkEnd },
+      { from: range.closeMarkStart, to: range.closeMarkEnd },
+    ]),
+  ];
+}
+
+function protectBlockBoundaryInput() {
+  return EditorState.transactionFilter.of((transaction) => {
+    if (isComposing || view?.composing) return transaction;
+    if (!transaction.docChanged) return transaction;
+    if (!transaction.isUserEvent("input") && !transaction.isUserEvent("delete")) return transaction;
+    const protectedRanges = protectedBlockMarkerRanges(transaction.startState.doc.toString());
+    if (!protectedRanges.length) return transaction;
+    let touchesProtectedMarker = false;
+    transaction.changes.iterChanges((fromA, toA) => {
+      if (touchesProtectedMarker) return;
+      touchesProtectedMarker = protectedRanges.some((range) =>
+        fromA === toA
+          ? positionInsideRange(fromA, range.from, range.to)
+          : rangesIntersect(fromA, toA, range.from, range.to));
+    });
+    return touchesProtectedMarker ? [] : transaction;
+  });
+}
+
+function hasUnclosedFenceBeforeLine(source: string, lineStart: number) {
+  const before = source.slice(0, lineStart);
+  const lines = before.split("\n");
+  let openFence: string | null = null;
+  for (const line of lines) {
+    if (!openFence) {
+      const openMatch = line.match(/^([ \t]{0,3})(`{3,})([^`]*)$/);
+      if (openMatch) openFence = openMatch[2];
+      continue;
+    }
+    const closeMatch = line.match(/^([ \t]{0,3})(`{3,})\s*$/);
+    if (closeMatch && closeMatch[2].length >= openFence.length) openFence = null;
+  }
+  return Boolean(openFence);
+}
+
+function autoCloseFencedCodeInput() {
+  return EditorState.transactionFilter.of((transaction) => {
+    if (isComposing || view?.composing) return transaction;
+    if (!transaction.docChanged || !transaction.isUserEvent("input.type")) return transaction;
+    const selection = transaction.startState.selection.main;
+    if (!selection.empty) return transaction;
+    let insertedText = "";
+    let simpleInput = false;
+    transaction.changes.iterChanges((fromA, toA, _fromB, _toB, insert) => {
+      if (fromA === selection.from && toA === selection.to && !simpleInput) {
+        insertedText = insert.toString();
+        simpleInput = true;
+      } else {
+        simpleInput = false;
+      }
+    });
+    if (!simpleInput || insertedText !== "`") return transaction;
+    const source = transaction.startState.doc.toString();
+    const line = transaction.startState.doc.lineAt(selection.from);
+    const beforeCursor = source.slice(line.from, selection.from);
+    const afterCursor = source.slice(selection.from, line.to);
+    const openMatch = beforeCursor.match(/^([ \t]{0,3})``$/);
+    if (!openMatch || afterCursor.trim()) return transaction;
+    if (hasUnclosedFenceBeforeLine(source, line.from)) return transaction;
+    const indent = openMatch[1] || "";
+    return {
+      changes: { from: selection.from, to: selection.to, insert: `\`\n\n${indent}\`\`\`` },
+      selection: { anchor: selection.from + 1 },
       scrollIntoView: true,
     };
   });
@@ -958,8 +1050,23 @@ type MathSourceRange = {
   end: number;
   contentStart: number;
   contentEnd: number;
+  openMarkStart: number;
+  openMarkEnd: number;
+  closeMarkStart: number;
+  closeMarkEnd: number;
   latex: string;
   display: boolean;
+};
+
+type FencedCodeSourceRange = {
+  start: number;
+  end: number;
+  contentStart: number;
+  contentEnd: number;
+  openMarkStart: number;
+  openMarkEnd: number;
+  closeMarkStart: number;
+  closeMarkEnd: number;
 };
 
 function findMathAt(source: string, position: number): MathSourceRange | null {
@@ -981,6 +1088,10 @@ function findMathAt(source: string, position: number): MathSourceRange | null {
         end,
         contentStart: start + 1,
         contentEnd: end - 1,
+        openMarkStart: start,
+        openMarkEnd: start + 1,
+        closeMarkStart: end - 1,
+        closeMarkEnd: end,
         latex: match[2],
         display: false,
       };
@@ -999,17 +1110,78 @@ function findBlockMathRanges(source: string): MathSourceRange[] {
     const body = match[3] || "";
     const beforeClose = match[4] || "";
     const closeLine = match[5] || "$$";
+    const openMarkStart = start + openLine.indexOf("$$");
     const contentStart = start + openLine.length + (source[start + openLine.length] === "\n" ? 1 : 0);
     const contentEnd = contentStart + body.length;
-    const end = contentEnd + beforeClose.length + closeLine.length;
+    const closeLineStart = contentEnd + beforeClose.length;
+    const closeMarkStart = closeLineStart + closeLine.indexOf("$$");
+    const end = closeLineStart + closeLine.length;
     ranges.push({
       start,
       end,
       contentStart,
       contentEnd,
+      openMarkStart,
+      openMarkEnd: openMarkStart + 2,
+      closeMarkStart,
+      closeMarkEnd: closeMarkStart + 2,
       latex: body.trim(),
       display: true,
     });
+  }
+  return ranges;
+}
+
+function findFencedCodeRanges(source: string): FencedCodeSourceRange[] {
+  const ranges: FencedCodeSourceRange[] = [];
+  const lines = source.split("\n");
+  let offset = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const openMatch = line.match(/^([ \t]{0,3})(`{3,})([^`]*)$/);
+    if (!openMatch) {
+      offset += line.length + 1;
+      continue;
+    }
+    const fence = openMatch[2];
+    const openLineStart = offset;
+    const openMarkStart = openLineStart + openMatch[1].length;
+    let closeLineIndex = -1;
+    let closeLineStart = 0;
+    let scanOffset = offset + line.length + 1;
+    for (let scan = index + 1; scan < lines.length; scan += 1) {
+      const closeMatch = lines[scan].match(/^([ \t]{0,3})(`{3,})\s*$/);
+      if (closeMatch && closeMatch[2].length >= fence.length) {
+        closeLineIndex = scan;
+        closeLineStart = scanOffset;
+        break;
+      }
+      scanOffset += lines[scan].length + 1;
+    }
+    if (closeLineIndex < 0) {
+      offset += line.length + 1;
+      continue;
+    }
+    const closeLine = lines[closeLineIndex];
+    const closeMatch = closeLine.match(/^([ \t]{0,3})(`{3,})/);
+    const closeMarkStart = closeLineStart + (closeMatch?.[1].length || 0);
+    const contentStart = openLineStart + line.length + 1;
+    const contentEnd = closeLineStart > contentStart ? closeLineStart - 1 : contentStart;
+    ranges.push({
+      start: openLineStart,
+      end: closeLineStart + closeLine.length,
+      contentStart,
+      contentEnd,
+      openMarkStart,
+      openMarkEnd: openMarkStart + fence.length,
+      closeMarkStart,
+      closeMarkEnd: closeMarkStart + (closeMatch?.[2].length || fence.length),
+    });
+    while (index < closeLineIndex) {
+      offset += lines[index].length + 1;
+      index += 1;
+    }
+    offset += lines[index].length + 1;
   }
   return ranges;
 }
@@ -1119,6 +1291,21 @@ function updateMathMenuPosition(target: EventTarget | null) {
     maxHeight,
     left: Math.min(Math.max(margin, rect ? rect.left : margin), Math.max(margin, window.innerWidth - width - margin)),
   };
+}
+
+function updateMathToolbarClearance() {
+  const element = mathToolbarRoot.value;
+  if (!element || !activeMathBlock.value) return;
+  mathToolbarClearance.value = Math.ceil(element.getBoundingClientRect().height);
+}
+
+function observeMathToolbar(element: HTMLDivElement | null) {
+  mathToolbarResizeObserver?.disconnect();
+  mathToolbarResizeObserver = null;
+  if (!element) return;
+  mathToolbarResizeObserver = new ResizeObserver(updateMathToolbarClearance);
+  mathToolbarResizeObserver.observe(element);
+  void nextTick(updateMathToolbarClearance);
 }
 
 function toggleMathGroup(group: MathToolGroup, event: MouseEvent) {
@@ -2643,6 +2830,38 @@ function deleteNextLineListMarkerStep(editorView: EditorView) {
   return true;
 }
 
+function contentIsEmpty(source: string, range: { contentStart: number; contentEnd: number }) {
+  return !source.slice(range.contentStart, range.contentEnd).trim();
+}
+
+function deleteEmptySourceBlockStep(editorView: EditorView) {
+  const selection = editorView.state.selection.main;
+  if (!selection.empty) return false;
+  const source = editorView.state.doc.toString();
+  const position = selection.from;
+  const math = findBlockMathRanges(source).find((range) =>
+    position >= range.contentStart && position <= range.contentEnd && contentIsEmpty(source, range));
+  const fenced = math ? null : findFencedCodeRanges(source).find((range) =>
+    position >= range.contentStart && position <= range.contentEnd && contentIsEmpty(source, range));
+  const range = math || fenced;
+  if (!range) return false;
+  editorView.dispatch({
+    changes: { from: range.start, to: range.end, insert: "" },
+    selection: { anchor: range.start },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+function preserveSourceBlockBoundaryStep(editorView: EditorView) {
+  const selection = editorView.state.selection.main;
+  if (!selection.empty) return false;
+  const source = editorView.state.doc.toString();
+  const position = selection.from;
+  return [...findBlockMathRanges(source), ...findFencedCodeRanges(source)].some((range) =>
+    position === range.contentStart);
+}
+
 function createState(markdownSource: string) {
   return EditorState.create({
     doc: markdownSource,
@@ -2658,6 +2877,8 @@ function createState(markdownSource: string) {
       indentUnit.of("    "),
       placeholder(placeholderText.value),
       redirectHiddenTableInput(),
+      autoCloseFencedCodeInput(),
+      protectBlockBoundaryInput(),
       autoPairBracketInput(),
       replaceCodeLigatureInput(),
       deferRenderedTextRevealOnPointerSelection(),
@@ -2769,7 +2990,7 @@ function createState(markdownSource: string) {
         {
           key: "Backspace",
           run(editorView) {
-            return backspacePairedBracketsStep(editorView) || deleteHeadingMarkerStep(editorView) || deleteListMarkerStep(editorView);
+            return deleteEmptySourceBlockStep(editorView) || preserveSourceBlockBoundaryStep(editorView) || backspacePairedBracketsStep(editorView) || deleteHeadingMarkerStep(editorView) || deleteListMarkerStep(editorView);
           },
         },
         {
@@ -3086,6 +3307,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopTableDragTracking();
+  mathToolbarResizeObserver?.disconnect();
+  mathToolbarResizeObserver = null;
   clearRenderedTextRevealTimer();
   clearRenderedTextHideTimer();
   renderedTextHideSelection = null;
@@ -3139,13 +3362,20 @@ watch(() => props.documentId, () => {
   if (view) view.dispatch({ effects: assetUrlEffect.of(new Map()) });
   scheduleResolveEditorAssetImages();
 });
+
+watch(mathToolbarRoot, observeMathToolbar, { flush: "post" });
+
+watch(activeMathBlock, async () => {
+  await nextTick();
+  updateMathToolbarClearance();
+}, { flush: "post" });
 </script>
 
 <template>
   <div
     class="live-editor live-codemirror-editor"
     :class="contextToolbarClass"
-    :style="{ '--markdown-editor-font-size': `${props.fontSize || 15}px`, '--markdown-editor-font-family': markdownFontFamilyCss, '--markdown-code-font-family': markdownCodeFontFamilyCss, '--markdown-highlight-color': highlightColor, '--markdown-line-height': markdownLineHeight, '--markdown-code-font-scale': markdownCodeFontScale, '--markdown-code-line-height': markdownCodeLineHeight }"
+    :style="{ '--markdown-editor-font-size': `${props.fontSize || 15}px`, '--markdown-editor-font-family': markdownFontFamilyCss, '--markdown-code-font-family': markdownCodeFontFamilyCss, '--markdown-highlight-color': highlightColor, '--markdown-line-height': markdownLineHeight, '--markdown-code-font-scale': markdownCodeFontScale, '--markdown-code-line-height': markdownCodeLineHeight, '--live-math-toolbar-clearance': `${mathToolbarClearance}px` }"
   >
     <div class="live-markdown-toolbar" :aria-label="t('liveMarkdown.toolbar')">
     <div class="live-markdown-toolbar-row live-markdown-toolbar-row-properties" role="toolbar" :aria-label="t('liveMarkdown.properties')">
@@ -3195,7 +3425,7 @@ watch(() => props.documentId, () => {
         @update:model-value="setBlockStyle"
       />
     </div>
-    <div v-if="activeMathBlock" class="live-markdown-toolbar-row live-markdown-toolbar-row-math" role="toolbar" :aria-label="t('liveMarkdown.mathToolbar')" @mousedown.prevent>
+    <div v-if="activeMathBlock" ref="mathToolbarRoot" class="live-markdown-toolbar-row live-markdown-toolbar-row-math" role="toolbar" :aria-label="t('liveMarkdown.mathToolbar')" @mousedown.prevent>
       <div v-for="group in MATH_TOOL_GROUPS" :key="group.key" class="live-math-tool-group">
         <button
           type="button"

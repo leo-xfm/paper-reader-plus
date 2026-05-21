@@ -36,10 +36,15 @@
 
 .readerm-title > div {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .readerm-title .title-edit {
+  min-width: 0;
   max-width: 340px;
+  flex: 0 1 auto;
 }
 
 .readerm-title .title-button {
@@ -50,12 +55,17 @@
   text-align: left;
   font-size: var(--font-size-panel-title);
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .readerm-title .title-edit input {
   height: var(--size-control-md);
   font-size: var(--font-size-panel-title);
   font-weight: 700;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .readerm-title span {
@@ -66,7 +76,6 @@
 }
 
 .readerm-title span {
-  margin-top: 2px;
   color: var(--color-text-muted);
   font-size: var(--font-size-small);
 }
@@ -74,8 +83,9 @@
 .readerm-reference-summary {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
+  flex: 0 0 auto;
 }
 
 .readerm-reference-summary > span {

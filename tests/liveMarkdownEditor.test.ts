@@ -164,6 +164,24 @@ describe("LiveMarkdownEditor", () => {
     expect(completeBlockOnEnter("```md\n$$", "```md\n$$".length)).toBeNull();
   });
 
+  it("completes a standalone fenced code delimiter on enter", () => {
+    const edit = completeBlockOnEnter("```python", "```python".length);
+    expect(edit?.value).toBe("```python\n\n```");
+    expect(edit?.selection).toEqual({ start: "```python\n".length, end: "```python\n".length });
+  });
+
+  it("moves into an existing auto-closed fenced code block without duplicating the close marker", () => {
+    const source = "```python\n\n```";
+    const edit = completeBlockOnEnter(source, "```python".length);
+    expect(edit?.value).toBe(source);
+    expect(edit?.selection).toEqual({ start: "```python\n".length, end: "```python\n".length });
+  });
+
+  it("does not complete fenced code again when a close marker is already on the next line", () => {
+    const source = "```python\n```";
+    expect(completeBlockOnEnter(source, "```python".length)).toBeNull();
+  });
+
   it("exits an empty plus bullet without rewriting surrounding lines", () => {
     const source = "+ first\n+ ";
     const edit = continueListOnEnter(source, source.length);

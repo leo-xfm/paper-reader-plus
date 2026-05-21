@@ -157,15 +157,27 @@
 }
 
 .library-item {
+  position: relative;
   margin: 8px 10px 0;
   border: 1px solid transparent;
   background: transparent;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px 32px;
+  display: block;
   align-items: center;
-  gap: 4px;
   min-height: 58px;
   border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.library-item::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 82px;
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  background: linear-gradient(90deg, rgba(239, 246, 255, 0), rgba(239, 246, 255, 0.92) 36%, rgba(239, 246, 255, 0.96));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
 .library-item-open {
@@ -180,16 +192,31 @@
   justify-items: start;
   text-align: left;
   padding: 10px 11px;
+  border-radius: inherit;
 }
 
 .library-item-link,
 .library-item-delete {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   width: 28px;
   height: 28px;
   padding: 0;
   border-radius: var(--radius-control);
   color: var(--color-text-soft);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(2px);
   opacity: 0;
+  z-index: 1;
+}
+
+.library-item-link {
+  right: 42px;
+}
+
+.library-item-delete {
+  right: 10px;
 }
 
 .thumbnail-list {
@@ -302,6 +329,11 @@
   opacity: 1;
 }
 
+.library-item:hover::after,
+.library-item:focus-within::after {
+  opacity: 1;
+}
+
 .library-item-link:hover,
 .library-item-link:focus-visible {
   color: var(--color-primary);
@@ -312,7 +344,7 @@
 .library-item-delete:hover,
 .library-item-delete:focus-visible {
   color: var(--color-danger);
-  background: #fee4e2;
+  background: rgba(254, 228, 226, 0.92);
   border-color: #fda29b;
 }
 

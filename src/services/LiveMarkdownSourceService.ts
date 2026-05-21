@@ -334,6 +334,24 @@ function isInFencedCodeBlock(source: string, position: number) {
   return fence !== null;
 }
 
+function isClosingFenceLine(text: string, fence: string) {
+  const match = text.match(/^[ \t]{0,3}(`{3,})[ \t]*$/);
+  return Boolean(match && match[1].length >= fence.length);
+}
+
+function existingFenceCloseAfterLine(source: string, lineEnd: number, fence: string) {
+  if (source[lineEnd] !== "\n") return null;
+  const nextLine = lineBoundsAt(source, lineEnd + 1);
+  const nextText = source.slice(nextLine.start, nextLine.end);
+  if (isClosingFenceLine(nextText, fence)) return { cursor: null };
+  if (nextText.trim()) return null;
+  if (source[nextLine.end] !== "\n") return null;
+  const closeLine = lineBoundsAt(source, nextLine.end + 1);
+  const closeText = source.slice(closeLine.start, closeLine.end);
+  if (!isClosingFenceLine(closeText, fence)) return null;
+  return { cursor: nextLine.start };
+}
+
 export function markdownCodeLigatureReplacement(source: string, cursor: number, insertedText: string): MarkdownCodeLigatureReplacement | null {
   if (insertedText.length !== 1) return null;
   const safeCursor = Math.max(0, Math.min(cursor, source.length));
@@ -434,6 +452,13 @@ export function completeBlockOnEnter(source: string, position: number): SourceEd
   const indent = fenceMatch[1] || "";
   const fence = fenceMatch[2];
   const info = (fenceMatch[3] || "").trimEnd();
+  const existingClose = existingFenceCloseAfterLine(source, line.end, fence);
+  if (existingClose) {
+    if (typeof existingClose.cursor === "number") {
+      return { value: source, selection: { start: existingClose.cursor, end: existingClose.cursor } };
+    }
+    return null;
+  }
   const insertion = `${indent}${fence}${info}\n${indent}\n${indent}${fence}`;
   const cursor = line.start + `${indent}${fence}${info}\n${indent}`.length;
   return {

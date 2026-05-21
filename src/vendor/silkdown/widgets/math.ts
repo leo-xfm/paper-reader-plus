@@ -36,13 +36,21 @@ export class MathWidget extends WidgetType {
     const content = document.createElement("div");
     content.className = "sd-live-block-content sd-math-block-content";
     renderMathContent(content, this.latex, true, this.labels?.emptyMathBlock);
-    const target = typeof this.from === "number" ? this.from + 3 : view.state.selection.main.from;
+    const target = typeof this.from === "number"
+      ? firstMathContentLineEnd(view, this.from)
+      : view.state.selection.main.from;
     return LiveBlockChrome.renderShell(view, "math", this.labels?.mathFormula || "Math formula", content, target, this.labels?.editMathBlock);
   }
 
   override ignoreEvent(): boolean {
     return false;
   }
+}
+
+function firstMathContentLineEnd(view: EditorView, from: number) {
+  const openLine = view.state.doc.lineAt(Math.min(from, view.state.doc.length));
+  if (openLine.number >= view.state.doc.lines) return Math.min(from + 3, view.state.doc.length);
+  return view.state.doc.line(openLine.number + 1).to;
 }
 
 function renderMathContent(element: HTMLElement, latex: string, displayMode: boolean, emptyLabel = "< Empty Math Block >") {
