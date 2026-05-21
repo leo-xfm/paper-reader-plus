@@ -49,7 +49,8 @@ describe("store migration", () => {
     expect(migrated.paragraph_translations).toEqual({});
     expect(migrated.settings.summary_figure_attachment_limit).toBe(10);
     expect(migrated.settings.summary_text_char_limit).toBe(120000);
-    expect(migrated.settings.markdown_font_family).toBe("current");
+    expect(migrated.settings.markdown_western_font_family).toBe("current");
+    expect(migrated.settings.markdown_chinese_font_family).toBe("current");
     expect(migrated.settings.markdown_code_font_family).toBe("Consolas");
     expect(migrated.settings.markdown_line_height).toBe(1.6);
     expect(migrated.settings.markdown_code_font_scale).toBe(0.86);
@@ -74,6 +75,21 @@ describe("store migration", () => {
     expect(migrateStoreToV3({ settings: { markdown_code_line_height: 3 } }).settings.markdown_code_line_height).toBe(1.8);
     expect(migrateStoreToV3({ settings: { markdown_code_line_height: 0.5 } }).settings.markdown_code_line_height).toBe(1);
     expect(migrateStoreToV3({ settings: { markdown_code_line_height: "bad" } }).settings.markdown_code_line_height).toBe(1.22);
+  });
+
+  it("migrates and cleans split markdown body font settings", () => {
+    expect(migrateStoreToV3({ settings: { markdown_font_family: "Georgia" } }).settings).toMatchObject({
+      markdown_western_font_family: "Georgia",
+      markdown_chinese_font_family: "current",
+    });
+    expect(migrateStoreToV3({ settings: { markdown_western_font_family: "Arial", markdown_chinese_font_family: "微软雅黑" } }).settings).toMatchObject({
+      markdown_western_font_family: "Arial",
+      markdown_chinese_font_family: "微软雅黑",
+    });
+    expect(migrateStoreToV3({ settings: { markdown_western_font_family: "bad", markdown_chinese_font_family: "bad" } }).settings).toMatchObject({
+      markdown_western_font_family: "current",
+      markdown_chinese_font_family: "current",
+    });
   });
 
   it("cleans markdown default editor mode", () => {

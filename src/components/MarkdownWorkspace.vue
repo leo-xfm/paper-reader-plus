@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import {
   BadgeInfo,
   Bold,
@@ -31,7 +31,6 @@ import {
   Wand2,
 } from "lucide-vue-next";
 import UiDropdown from "@/components/UiDropdown.vue";
-import LiveMarkdownEditor from "@/components/LiveMarkdownEditor.vue";
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
 import { scaledMarkdownLineHeight, useMarkdownZoom } from "@/composables/useMarkdownZoom";
@@ -47,8 +46,11 @@ import {
   type SourceEdit,
   type SourceSelection,
 } from "@/services/LiveMarkdownSourceService";
-import { markdownCodeFontFamily, markdownFontOptions } from "@/services/MarkdownFontOptionsService";
+import { markdownChineseFontOptions, markdownCodeFontFamily, markdownWesternFontOptions } from "@/services/MarkdownFontOptionsService";
 import type { MarkdownEditorMode, Settings } from "@/types";
+import type LiveMarkdownEditorComponent from "@/components/LiveMarkdownEditor.vue";
+
+const LiveMarkdownEditor = defineAsyncComponent(() => import("@/components/LiveMarkdownEditor.vue"));
 
 const props = defineProps<{
   title: string;
@@ -86,8 +88,12 @@ const { t } = useI18n();
 const markdownLineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
 
-function updateMarkdownFontFamily(value: string) {
-  emit("updateSettings", { markdown_font_family: value });
+function updateMarkdownWesternFontFamily(value: string) {
+  emit("updateSettings", { markdown_western_font_family: value });
+}
+
+function updateMarkdownChineseFontFamily(value: string) {
+  emit("updateSettings", { markdown_chinese_font_family: value });
 }
 const FONT_COLOR_OPTIONS = [
   { value: "black", labelKey: "color.black" as I18nKey, swatch: "#111827" },
@@ -406,11 +412,19 @@ defineExpose({
         <span class="live-markdown-toolbar-row-label">{{ t("liveMarkdown.properties") }}</span>
         <UiDropdown
           class="live-markdown-font-dropdown"
-          :model-value="settings?.markdown_font_family || 'current'"
-          :title="t('settings.markdownFontFamily')"
-          :options="markdownFontOptions"
+          :model-value="settings?.markdown_western_font_family || settings?.markdown_font_family || 'current'"
+          :title="t('settings.markdownWesternFontFamily')"
+          :options="markdownWesternFontOptions"
           menu-class="live-markdown-font-dropdown-menu"
-          @update:model-value="updateMarkdownFontFamily"
+          @update:model-value="updateMarkdownWesternFontFamily"
+        />
+        <UiDropdown
+          class="live-markdown-font-dropdown"
+          :model-value="settings?.markdown_chinese_font_family || 'current'"
+          :title="t('settings.markdownChineseFontFamily')"
+          :options="markdownChineseFontOptions"
+          menu-class="live-markdown-font-dropdown-menu"
+          @update:model-value="updateMarkdownChineseFontFamily"
         />
         <button type="button" :class="{ active: editActiveMarks.strong }" :title="t('liveMarkdown.bold')" @click="applyTextareaEdit((source, selection) => toggleWrappedMarkdown(source, selection, '**'))"><Bold :size="15" /></button>
         <button type="button" :class="{ active: editActiveMarks.em }" :title="t('liveMarkdown.italic')" @click="applyTextareaEdit((source, selection) => toggleWrappedMarkdown(source, selection, '*'))"><Italic :size="15" /></button>

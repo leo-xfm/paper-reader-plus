@@ -4,7 +4,7 @@ export type MarkdownFontOption = {
   style: { fontFamily: string };
 };
 
-export const markdownFontOptions: MarkdownFontOption[] = [
+export const markdownWesternFontOptions: MarkdownFontOption[] = [
   { value: "Aptos", label: "Aptos", style: { fontFamily: '"Aptos", system-ui, sans-serif' } },
   { value: "Arial", label: "Arial", style: { fontFamily: '"Arial", system-ui, sans-serif' } },
   { value: "Cambria", label: "Cambria", style: { fontFamily: '"Cambria", Georgia, serif' } },
@@ -12,6 +12,15 @@ export const markdownFontOptions: MarkdownFontOption[] = [
   { value: "current", label: "Inter", style: { fontFamily: '"Inter", system-ui, sans-serif' } },
   { value: "Segoe UI", label: "Segoe UI", style: { fontFamily: '"Segoe UI", system-ui, sans-serif' } },
   { value: "Times New Roman", label: "Times New Roman", style: { fontFamily: '"Times New Roman", Georgia, serif' } },
+];
+
+export const markdownChineseFontOptions: MarkdownFontOption[] = [
+  { value: "仿宋", label: "仿宋", style: { fontFamily: '"FangSong", "FangSong_GB2312", "STFangsong", serif' } },
+  { value: "宋体", label: "宋体", style: { fontFamily: '"SimSun", "Songti SC", "Noto Serif CJK SC", serif' } },
+  { value: "黑体", label: "黑体", style: { fontFamily: '"SimHei", "Heiti SC", "Noto Sans CJK SC", sans-serif' } },
+  { value: "楷体", label: "楷体", style: { fontFamily: '"KaiTi", "Kaiti SC", "STKaiti", serif' } },
+  { value: "思源宋体", label: "思源宋体", style: { fontFamily: '"Source Han Serif SC", "Noto Serif CJK SC", "SimSun", serif' } },
+  { value: "微软雅黑", label: "微软雅黑", style: { fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif' } },
 ];
 
 export const markdownCodeFontOptions: MarkdownFontOption[] = [
@@ -29,10 +38,26 @@ export const markdownCodeFontOptions: MarkdownFontOption[] = [
   { value: "Space Mono", label: "Space Mono", style: { fontFamily: '"Space Mono", Consolas, monospace' } },
 ];
 
-export function markdownBodyFontFamily(value = "current") {
-  if (value === "current") return "inherit";
-  if (value === "Aptos" || value === "Arial" || value === "Segoe UI") return `"${value}", system-ui, sans-serif`;
-  return `"${value}", Georgia, "Times New Roman", serif`;
+const westernSansFonts = new Set(["Aptos", "Arial", "Segoe UI"]);
+const chineseFontStacks: Record<string, string[]> = {
+  current: ['"Microsoft YaHei"', '"PingFang SC"', '"Noto Sans CJK SC"'],
+  仿宋: ['"FangSong"', '"FangSong_GB2312"', '"STFangsong"'],
+  宋体: ['"SimSun"', '"Songti SC"', '"Noto Serif CJK SC"'],
+  黑体: ['"SimHei"', '"Heiti SC"', '"Noto Sans CJK SC"'],
+  楷体: ['"KaiTi"', '"Kaiti SC"', '"STKaiti"'],
+  思源宋体: ['"Source Han Serif SC"', '"Noto Serif CJK SC"', '"SimSun"'],
+  微软雅黑: ['"Microsoft YaHei"', '"PingFang SC"', '"Noto Sans CJK SC"'],
+};
+
+export const markdownFontOptions = markdownWesternFontOptions;
+
+export function markdownBodyFontFamily(westernValue = "current", chineseValue = "current") {
+  const westernStack = westernValue === "current" ? ["inherit"] : [`"${westernValue}"`];
+  const chineseStack = chineseFontStacks[chineseValue] || chineseFontStacks.current;
+  const fallbackStack = westernValue === "current" || westernSansFonts.has(westernValue)
+    ? ["system-ui", "sans-serif"]
+    : ["Georgia", '"Times New Roman"', "serif"];
+  return [...westernStack, ...chineseStack, ...fallbackStack].join(", ");
 }
 
 export function markdownCodeFontFamily(value = "Consolas") {

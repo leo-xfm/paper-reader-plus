@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ArrowUp,
   Bot,
@@ -21,7 +21,6 @@ import {
   X,
 } from "lucide-vue-next";
 import ColorDropdown from "@/components/ColorDropdown.vue";
-import LiveMarkdownEditor from "@/components/LiveMarkdownEditor.vue";
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import { readerPanelTabs, type RightPanelTab } from "@/components/ReaderPanelTabs";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
@@ -32,6 +31,9 @@ import { markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import { hasActiveAnnotationFilters, parseTagsInput, type AnnotationFilters } from "@/services/ReaderAnnotationService";
 import { displaySymbolText, normalizeSymbol } from "@/services/SymbolTrackerService";
 import type { AiRedoMode, Annotation, AnnotationType, MarkdownEditorMode, ReaderPackageAiHistory, ReaderPackageAiMessage, Settings, SymbolDefinition } from "@/types";
+import type LiveMarkdownEditorComponent from "@/components/LiveMarkdownEditor.vue";
+
+const LiveMarkdownEditor = defineAsyncComponent(() => import("@/components/LiveMarkdownEditor.vue"));
 
 const props = defineProps<{
   activeTab: RightPanelTab;

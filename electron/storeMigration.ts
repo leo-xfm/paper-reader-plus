@@ -241,6 +241,9 @@ function cleanMap(value: unknown) {
   return isRecord(value) ? value as Record<string, { content: string; updated_at: string }> : {};
 }
 
+const MARKDOWN_WESTERN_FONT_FAMILIES = ["current", "Aptos", "Arial", "Cambria", "Georgia", "Segoe UI", "Times New Roman"];
+const MARKDOWN_CHINESE_FONT_FAMILIES = ["current", "仿宋", "宋体", "黑体", "楷体", "思源宋体", "微软雅黑"];
+
 function cleanSettings(value: unknown) {
   const settings = isRecord(value) ? { ...value } : {};
   const figureLimit = cleanNumber(settings.summary_figure_attachment_limit, 10);
@@ -250,7 +253,9 @@ function cleanSettings(value: unknown) {
   const markdownLineHeight = cleanNumber(settings.markdown_line_height, 1.6);
   const markdownCodeFontScale = cleanNumber(settings.markdown_code_font_scale, 0.86);
   const markdownCodeLineHeight = cleanNumber(settings.markdown_code_line_height, 1.22);
-  const markdownFontFamily = typeof settings.markdown_font_family === "string" ? settings.markdown_font_family.trim() : "";
+  const legacyMarkdownFontFamily = typeof settings.markdown_font_family === "string" ? settings.markdown_font_family.trim() : "";
+  const markdownWesternFontFamily = typeof settings.markdown_western_font_family === "string" ? settings.markdown_western_font_family.trim() : "";
+  const markdownChineseFontFamily = typeof settings.markdown_chinese_font_family === "string" ? settings.markdown_chinese_font_family.trim() : "";
   const markdownCodeFontFamily = typeof settings.markdown_code_font_family === "string" ? settings.markdown_code_font_family.trim() : "";
   const markdownHighlightColor = typeof settings.markdown_highlight_color === "string" ? settings.markdown_highlight_color.trim() : "";
   settings.summary_figure_attachment_limit = Math.min(20, Math.max(0, Math.trunc(figureLimit)));
@@ -260,9 +265,15 @@ function cleanSettings(value: unknown) {
   settings.markdown_line_height = Math.min(2.2, Math.max(1.1, Math.round(markdownLineHeight * 100) / 100));
   settings.markdown_code_font_scale = Math.min(1.1, Math.max(0.7, Math.round(markdownCodeFontScale * 100) / 100));
   settings.markdown_code_line_height = Math.min(1.8, Math.max(1, Math.round(markdownCodeLineHeight * 100) / 100));
-  settings.markdown_font_family = ["current", "Aptos", "Arial", "Cambria", "Georgia", "Segoe UI", "Times New Roman"].includes(markdownFontFamily)
-    ? markdownFontFamily
+  settings.markdown_western_font_family = MARKDOWN_WESTERN_FONT_FAMILIES.includes(markdownWesternFontFamily)
+    ? markdownWesternFontFamily
+    : MARKDOWN_WESTERN_FONT_FAMILIES.includes(legacyMarkdownFontFamily)
+      ? legacyMarkdownFontFamily
+      : "current";
+  settings.markdown_chinese_font_family = MARKDOWN_CHINESE_FONT_FAMILIES.includes(markdownChineseFontFamily)
+    ? markdownChineseFontFamily
     : "current";
+  delete settings.markdown_font_family;
   settings.markdown_code_font_family = [
     "Anonymous Pro",
     "Consolas",

@@ -87,7 +87,10 @@ const renderOptions = computed(() => ({
   mathEnabled: props.settings?.markdown_math_enabled !== false,
 }));
 const highlightColor = computed(() => props.settings?.markdown_highlight_color || "#fff3bf");
-const bodyFontFamily = computed(() => markdownBodyFontFamily(props.settings?.markdown_font_family || "current"));
+const bodyFontFamily = computed(() => markdownBodyFontFamily(
+  props.settings?.markdown_western_font_family || props.settings?.markdown_font_family || "current",
+  props.settings?.markdown_chinese_font_family || "current",
+));
 const codeFontFamily = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
 const lineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const codeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);

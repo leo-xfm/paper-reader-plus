@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import UiDropdown from "@/components/UiDropdown.vue";
 import { useI18n } from "@/i18n";
-import { markdownCodeFontOptions, markdownFontOptions } from "@/services/MarkdownFontOptionsService";
+import { markdownChineseFontOptions, markdownCodeFontOptions, markdownWesternFontOptions } from "@/services/MarkdownFontOptionsService";
 import type { FileAssociationExtension, FileAssociationStatus, PromptTemplateStatus, Settings } from "@/types";
 
 export type SettingsPanel = "general" | "markdown" | "agent-api" | "ocr-api" | "translation-api" | "file-associations" | "system-prompt" | "summary-prompt";
@@ -107,12 +107,21 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
           <input v-model.number="settings.markdown_code_line_height" type="number" min="1" max="1.8" step="0.02" />
         </label>
         <label class="settings-general-item">
-          <span class="settings-general-title">{{ t("settings.markdownFontFamily") }}</span>
-          <small>{{ t("settings.markdownFontFamilyDescription") }}</small>
+          <span class="settings-general-title">{{ t("settings.markdownWesternFontFamily") }}</span>
+          <small>{{ t("settings.markdownWesternFontFamilyDescription") }}</small>
           <UiDropdown
-            v-model="settings.markdown_font_family"
-            :title="t('settings.markdownFontFamily')"
-            :options="markdownFontOptions"
+            v-model="settings.markdown_western_font_family"
+            :title="t('settings.markdownWesternFontFamily')"
+            :options="markdownWesternFontOptions"
+          />
+        </label>
+        <label class="settings-general-item">
+          <span class="settings-general-title">{{ t("settings.markdownChineseFontFamily") }}</span>
+          <small>{{ t("settings.markdownChineseFontFamilyDescription") }}</small>
+          <UiDropdown
+            v-model="settings.markdown_chinese_font_family"
+            :title="t('settings.markdownChineseFontFamily')"
+            :options="markdownChineseFontOptions"
           />
         </label>
         <label class="settings-general-item">

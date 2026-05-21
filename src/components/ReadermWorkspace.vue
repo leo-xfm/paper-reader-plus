@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import { Check, ChevronLeft, ChevronRight, Columns2, Download, Eye, FileText, Save, Search } from "lucide-vue-next";
-import LiveMarkdownEditor from "@/components/LiveMarkdownEditor.vue";
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
 import { useDropdownPopover } from "@/composables/useDropdownPopover";
@@ -9,6 +8,9 @@ import { scaledMarkdownLineHeight, useMarkdownZoom } from "@/composables/useMark
 import { useI18n } from "@/i18n";
 import { markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import type { LibraryDocument, ReadermEditorMode, ReadermReference, Settings } from "@/types";
+import type LiveMarkdownEditorComponent from "@/components/LiveMarkdownEditor.vue";
+
+const LiveMarkdownEditor = defineAsyncComponent(() => import("@/components/LiveMarkdownEditor.vue"));
 
 const props = defineProps<{
   title: string;
@@ -40,7 +42,7 @@ const emit = defineEmits<{
 }>();
 
 const textarea = ref<HTMLTextAreaElement | null>(null);
-const liveEditor = ref<InstanceType<typeof LiveMarkdownEditor> | null>(null);
+const liveEditor = ref<InstanceType<typeof LiveMarkdownEditorComponent> | null>(null);
 const previewRoot = ref<HTMLElement | null>(null);
 const previewSearchInput = ref<HTMLInputElement | null>(null);
 const liveSelection = ref<{ start: number; end: number } | undefined>(undefined);

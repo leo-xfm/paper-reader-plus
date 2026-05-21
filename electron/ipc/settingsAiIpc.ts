@@ -44,9 +44,16 @@ function cleanMarkdownHighlightColor(value: unknown) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : "#fff3bf";
 }
 
-function cleanMarkdownFontFamily(value: unknown) {
+function cleanMarkdownWesternFontFamily(value: unknown) {
   const fontFamily = typeof value === "string" ? value.trim() : "";
   return ["current", "Aptos", "Arial", "Cambria", "Georgia", "Segoe UI", "Times New Roman"].includes(fontFamily)
+    ? fontFamily
+    : "current";
+}
+
+function cleanMarkdownChineseFontFamily(value: unknown) {
+  const fontFamily = typeof value === "string" ? value.trim() : "";
+  return ["current", "仿宋", "宋体", "黑体", "楷体", "思源宋体", "微软雅黑"].includes(fontFamily)
     ? fontFamily
     : "current";
 }
@@ -160,7 +167,12 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
       markdown_line_height: clampMarkdownLineHeight(patch.markdown_line_height ?? current.markdown_line_height),
       markdown_code_font_scale: clampMarkdownCodeFontScale(patch.markdown_code_font_scale ?? current.markdown_code_font_scale),
       markdown_code_line_height: clampMarkdownCodeLineHeight(patch.markdown_code_line_height ?? current.markdown_code_line_height),
-      markdown_font_family: cleanMarkdownFontFamily(patch.markdown_font_family ?? current.markdown_font_family),
+      markdown_western_font_family: cleanMarkdownWesternFontFamily(
+        patch.markdown_western_font_family ?? current.markdown_western_font_family ?? current.markdown_font_family,
+      ),
+      markdown_chinese_font_family: cleanMarkdownChineseFontFamily(
+        patch.markdown_chinese_font_family ?? current.markdown_chinese_font_family,
+      ),
       markdown_code_font_family: cleanMarkdownCodeFontFamily(patch.markdown_code_font_family ?? current.markdown_code_font_family),
       markdown_code_line_numbers: patch.markdown_code_line_numbers === undefined ? current.markdown_code_line_numbers : patch.markdown_code_line_numbers !== false,
       markdown_code_ligatures: patch.markdown_code_ligatures === undefined ? current.markdown_code_ligatures : patch.markdown_code_ligatures !== false,
@@ -204,6 +216,7 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
       simpletex_ocr_token: cleanSimpleTexToken(patch.simpletex_ocr_token ?? current.simpletex_ocr_token),
       simpletex_ocr_enabled: patch.simpletex_ocr_enabled === undefined ? current.simpletex_ocr_enabled : patch.simpletex_ocr_enabled === true,
     };
+    delete next.markdown_font_family;
     ctx.store.settings = next;
     ctx.saveStore();
     createApplicationMenu((action) => ctx.window?.webContents.send("menu:action", action), next.ui_language, (topic) => openHelpWindow(ctx.window, topic));

@@ -311,7 +311,9 @@ export type Settings = {
   markdown_line_height: number;
   markdown_code_font_scale: number;
   markdown_code_line_height: number;
-  markdown_font_family: string;
+  markdown_font_family?: string;
+  markdown_western_font_family: string;
+  markdown_chinese_font_family: string;
   markdown_code_font_family: string;
   markdown_code_line_numbers: boolean;
   markdown_code_ligatures: boolean;

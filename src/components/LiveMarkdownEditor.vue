@@ -47,7 +47,7 @@ import {
   ShieldAlert,
   TriangleAlert,
 } from "lucide-vue-next";
-import { EditorState, Prec, StateEffect, type EditorSelection, type Extension, type Text } from "@codemirror/state";
+import { EditorSelection, EditorState, Prec, StateEffect, type Extension, type Text } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
@@ -99,7 +99,7 @@ import {
   type SourceTableRange,
   type ImageAlignment,
 } from "@/services/LiveMarkdownSourceService";
-import { markdownBodyFontFamily, markdownCodeFontFamily, markdownFontOptions } from "@/services/MarkdownFontOptionsService";
+import { markdownBodyFontFamily, markdownChineseFontOptions, markdownCodeFontFamily, markdownWesternFontOptions } from "@/services/MarkdownFontOptionsService";
 import { silkdownPlugin } from "@/vendor/silkdown/plugin";
 import { baseTheme as silkdownBaseTheme } from "@/vendor/silkdown/theme";
 import { scaledMarkdownLineHeight } from "@/composables/useMarkdownZoom";
@@ -564,7 +564,10 @@ let renderedTextHideUntil = 0;
 let renderedTextHideSelection: EditorSelection | null = null;
 
 const placeholderText = computed(() => props.placeholder || t("liveMarkdown.placeholder"));
-const markdownFontFamilyCss = computed(() => markdownBodyFontFamily(props.settings?.markdown_font_family || "current"));
+const markdownFontFamilyCss = computed(() => markdownBodyFontFamily(
+  props.settings?.markdown_western_font_family || props.settings?.markdown_font_family || "current",
+  props.settings?.markdown_chinese_font_family || "current",
+));
 const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
 const markdownLineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const markdownCodeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
@@ -721,6 +724,34 @@ function replaceCodeLigatureInput() {
     return {
       changes: { from: replacement.start, to: replacement.end, insert: replacement.text },
       selection: { anchor: replacement.start + replacement.text.length },
+      scrollIntoView: true,
+    };
+  });
+}
+
+function autoPairBracketInput() {
+  return EditorState.transactionFilter.of((transaction) => {
+    if (isComposing || view?.composing) return transaction;
+    if (!transaction.docChanged || !transaction.isUserEvent("input.type")) return transaction;
+    const selection = transaction.startState.selection.main;
+    let insertedText = "";
+    let simpleInput = false;
+    transaction.changes.iterChanges((fromA, toA, _fromB, _toB, insert) => {
+      if (fromA === selection.from && toA === selection.to && !simpleInput) {
+        insertedText = insert.toString();
+        simpleInput = true;
+      } else {
+        simpleInput = false;
+      }
+    });
+    const close = AUTO_PAIR_BRACKETS[insertedText];
+    if (!simpleInput || !close) return transaction;
+    const selected = transaction.startState.doc.sliceString(selection.from, selection.to);
+    return {
+      changes: { from: selection.from, to: selection.to, insert: `${insertedText}${selected}${close}` },
+      selection: selected
+        ? { anchor: selection.from + insertedText.length, head: selection.to + insertedText.length }
+        : { anchor: selection.from + insertedText.length },
       scrollIntoView: true,
     };
   });
@@ -2551,6 +2582,67 @@ function deleteListMarkerStep(editorView: EditorView) {
   return true;
 }
 
+const AUTO_PAIR_BRACKETS: Record<string, string> = {
+  "(": ")",
+  "（": "）",
+  "[": "]",
+  "【": "】",
+  "{": "}",
+};
+
+function insertPairedBracket(editorView: EditorView, open: string, close: string) {
+  const { state } = editorView;
+  if (state.readOnly || isComposing || editorView.composing) return false;
+  const tr = state.changeByRange((range) => {
+    const selected = state.sliceDoc(range.from, range.to);
+    return {
+      changes: { from: range.from, to: range.to, insert: `${open}${selected}${close}` },
+      range: selected
+        ? EditorSelection.range(range.from + open.length, range.to + open.length)
+        : EditorSelection.cursor(range.from + open.length),
+    };
+  });
+  editorView.dispatch(state.update(tr, { scrollIntoView: true, userEvent: "input.type" }));
+  return true;
+}
+
+function backspacePairedBracketsStep(editorView: EditorView) {
+  const selection = editorView.state.selection.main;
+  if (!selection.empty) return false;
+  const position = selection.from;
+  if (position <= 0 || position >= editorView.state.doc.length) return false;
+  const before = editorView.state.doc.sliceString(position - 1, position);
+  const after = editorView.state.doc.sliceString(position, position + 1);
+  if (AUTO_PAIR_BRACKETS[before] !== after) return false;
+  editorView.dispatch({
+    changes: { from: position - 1, to: position + 1, insert: "" },
+    selection: { anchor: position - 1 },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+function nextLineListPrefixLength(text: string) {
+  const match = text.match(/^(\s*(?:[-+*]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+))/);
+  return match?.[1].length || 0;
+}
+
+function deleteNextLineListMarkerStep(editorView: EditorView) {
+  const selection = editorView.state.selection.main;
+  if (!selection.empty) return false;
+  const line = editorView.state.doc.lineAt(selection.from);
+  if (selection.from !== line.to || line.number >= editorView.state.doc.lines) return false;
+  const nextLine = editorView.state.doc.line(line.number + 1);
+  const prefixLength = nextLineListPrefixLength(nextLine.text);
+  if (prefixLength <= 0) return false;
+  editorView.dispatch({
+    changes: { from: line.to, to: nextLine.from + prefixLength, insert: "" },
+    selection: { anchor: line.to },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 function createState(markdownSource: string) {
   return EditorState.create({
     doc: markdownSource,
@@ -2566,6 +2658,7 @@ function createState(markdownSource: string) {
       indentUnit.of("    "),
       placeholder(placeholderText.value),
       redirectHiddenTableInput(),
+      autoPairBracketInput(),
       replaceCodeLigatureInput(),
       deferRenderedTextRevealOnPointerSelection(),
       preserveViewportOnSelectionChange(),
@@ -2669,10 +2762,20 @@ function createState(markdownSource: string) {
         },
       }),
       Prec.highest(keymap.of([
+        ...Object.entries(AUTO_PAIR_BRACKETS).map(([open, close]) => ({
+          key: open,
+          run: (editorView: EditorView) => insertPairedBracket(editorView, open, close),
+        })),
         {
           key: "Backspace",
           run(editorView) {
-            return deleteHeadingMarkerStep(editorView) || deleteListMarkerStep(editorView);
+            return backspacePairedBracketsStep(editorView) || deleteHeadingMarkerStep(editorView) || deleteListMarkerStep(editorView);
+          },
+        },
+        {
+          key: "Delete",
+          run(editorView) {
+            return deleteNextLineListMarkerStep(editorView);
           },
         },
         {
@@ -2903,8 +3006,12 @@ function mountEditor() {
   });
 }
 
-function updateMarkdownFontFamily(value: string) {
-  emit("updateSettings", { markdown_font_family: value });
+function updateMarkdownWesternFontFamily(value: string) {
+  emit("updateSettings", { markdown_western_font_family: value });
+}
+
+function updateMarkdownChineseFontFamily(value: string) {
+  emit("updateSettings", { markdown_chinese_font_family: value });
 }
 
 function resolvedImageUrl(src: string, readerHref = "") {
@@ -3045,11 +3152,19 @@ watch(() => props.documentId, () => {
       <span class="live-markdown-toolbar-row-label">{{ t("liveMarkdown.properties") }}</span>
       <UiDropdown
         class="live-markdown-font-dropdown"
-        :model-value="settings?.markdown_font_family || 'current'"
-        :title="t('settings.markdownFontFamily')"
-        :options="markdownFontOptions"
+        :model-value="settings?.markdown_western_font_family || settings?.markdown_font_family || 'current'"
+        :title="t('settings.markdownWesternFontFamily')"
+        :options="markdownWesternFontOptions"
         menu-class="live-markdown-font-dropdown-menu"
-        @update:model-value="updateMarkdownFontFamily"
+        @update:model-value="updateMarkdownWesternFontFamily"
+      />
+      <UiDropdown
+        class="live-markdown-font-dropdown"
+        :model-value="settings?.markdown_chinese_font_family || 'current'"
+        :title="t('settings.markdownChineseFontFamily')"
+        :options="markdownChineseFontOptions"
+        menu-class="live-markdown-font-dropdown-menu"
+        @update:model-value="updateMarkdownChineseFontFamily"
       />
       <button type="button" :class="{ active: activeMarks.strong }" :title="t('liveMarkdown.bold')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '**'))"><Bold :size="15" /></button>
       <button type="button" :class="{ active: activeMarks.em }" :title="t('liveMarkdown.italic')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '*'))"><Italic :size="15" /></button>
