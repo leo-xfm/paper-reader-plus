@@ -13,7 +13,8 @@
     "test": "vitest run",
     "start": "electron .",
     "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -82,6 +83,28 @@
     "win": {
       "icon": "icon/256.png",
       "target": "nsis"
+    },
+    "mac": {
+      "icon": "icon/256.icns",
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
