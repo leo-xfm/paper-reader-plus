@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPdfParagraphActionBlocks } from "@/services/PdfParagraphActionService";
+import { buildPdfParagraphActionBlocks, buildPdfTextBlocks } from "@/services/PdfParagraphActionService";
 import type { PdfTextItem } from "@/pdf/pdfTypes";
 
 function item(text: string, left: number, top: number, width = 0.16, height = 0.014, fontSize = 10): PdfTextItem {
@@ -89,6 +89,27 @@ describe("PdfParagraphActionService", () => {
 
     expect(blocks).toHaveLength(1);
     expect(blocks[0].text).toBe("The A-B test uses x+y features in v2.0.");
+  });
+
+  it("marks display equations as reusable formula blocks", () => {
+    const blocks = buildPdfTextBlocks(7, [
+      item("The objective is optimized below.", 0.1, 0.1, 0.42),
+      item("L = \\sum _ { i = 1 } ^ n", 0.24, 0.15, 0.32),
+      item("The next paragraph explains the loss.", 0.1, 0.2, 0.46),
+    ]);
+
+    expect(blocks.map((block) => block.kind)).toEqual(["paragraph", "formula", "paragraph"]);
+    expect(blocks[1].text).toBe("L = \\sum _ { i = 1 } ^ n");
+    expect(blocks[1].rects_pct).toHaveLength(1);
+  });
+
+  it("keeps ordinary technical prose as paragraph blocks", () => {
+    const blocks = buildPdfTextBlocks(8, [
+      item("The A-B test uses x+y features in v2.0.", 0.1, 0.1, 0.44),
+    ]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind).toBe("paragraph");
   });
 
   it("recognizes paragraphs from loosely extracted text items", () => {

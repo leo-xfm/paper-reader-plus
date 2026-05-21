@@ -10,6 +10,31 @@ describe("MarkdownRenderService", () => {
     expect(html).toContain("y");
   });
 
+  it("renders same-line double dollar math in display mode", () => {
+    const html = renderMarkdown("Inline $$x^2$$ text");
+    expect(html).toContain("katex-display");
+    expect(html).toContain("x");
+  });
+
+  it("keeps single dollar math in inline mode", () => {
+    const html = renderMarkdown("Inline $x^2$ text");
+    expect(html).toContain("katex");
+    expect(html).not.toContain("katex-display");
+  });
+
+  it("does not treat escaped dollars as inline math delimiters", () => {
+    const html = renderMarkdown("Cost is \\$5 and $$x$$");
+    expect(html).toContain("$5");
+    expect(html).toContain("katex-display");
+    expect(html).toContain("x");
+  });
+
+  it("keeps standalone double dollar blocks in display mode", () => {
+    const html = renderMarkdown("$$\ny\n$$");
+    expect(html).toContain("katex-display");
+    expect(html).toContain("y");
+  });
+
   it("renders simple LaTeX equation environments before markdown", () => {
     const html = renderMarkdown("\\begin{equation}x^2\\end{equation}");
     expect(html).toContain("katex-display");
@@ -48,6 +73,30 @@ describe("MarkdownRenderService", () => {
     expect(html).toContain('rel="noopener noreferrer"');
   });
 
+  it("preserves nested list structure for preview indentation", () => {
+    const html = renderMarkdown("- parent\n  - child\n    - grandchild");
+    expect(html).toMatch(/<li>parent\s*<ul>\s*<li>child\s*<ul>\s*<li>grandchild<\/li>/);
+  });
+
+  it("preserves four-space nested plus lists in preview", () => {
+    const html = renderMarkdown([
+      "## Implicit Geometry Perception",
+      "",
+      "+ 转化普通2D图像信息为3D数据 2D → 3D Perception with Spatial Encoder",
+      "+ 数据类型：点云图、深度、相机姿态或 3D 追踪点",
+      "+ 方法概述",
+      "    + 将所有成对预测的点图 pointmap 对齐到一个共同的3D参考系中",
+      "    + 思路1：2D → ViT Encoder → Decode with Info Sharing ([DUSt3R](https://arxiv.org/abs/2312.14132)) → Dense Head ([MASt3R](https://arxiv.org/abs/2406.09756)) → PointMap → Alignment",
+      "    + 思路2：Patched Images → Camera Token Addition (编码相机参数) → MHA ([VGGT](https://openaccess.thecvf.com/content/CVPR2025/papers/Wang_VGGT_Visual_Geometry_Grounded_Transformer_CVPR_2025_paper.pdf), similar to ViT)",
+      "    + [DA3](https://arxiv.org/pdf/2511.10647): Dual DPT (Dense Prediction Transformer)  ",
+      "        + Depth Map: 预测每个像素离相机的距离",
+      "        + Ray Map: yucc",
+    ].join("\n"));
+    expect(html).toMatch(/<li>方法概述\s*<ul>\s*<li>将所有成对预测/);
+    expect(html).toMatch(/Dual DPT \(Dense Prediction Transformer\)\s*<ul>\s*<li>Depth Map/);
+    expect(html).not.toContain("方法概述\n+ 将所有成对预测");
+  });
+
   it("linkifies bare http and www urls", () => {
     const html = renderMarkdown("Visit https://example.com and www.example.org.");
     expect(html).toContain('<a href="https://example.com"');
@@ -73,6 +122,13 @@ describe("MarkdownRenderService", () => {
     const html = renderMarkdown("# Title\n\nText\n\n### Details");
     expect(html).toContain('data-readerm-heading-id="markdown-heading-0"');
     expect(html).toContain('data-readerm-heading-id="markdown-heading-4"');
+  });
+
+  it("renders inline emphasis inside headings", () => {
+    const html = renderMarkdown("### **0. 摘要翻译**");
+    expect(html).toContain("<h3");
+    expect(html).toContain("<strong>0. 摘要翻译</strong>");
+    expect(html).not.toContain("**0. 摘要翻译**");
   });
 
   it("renders sanitized raw details and block html", () => {

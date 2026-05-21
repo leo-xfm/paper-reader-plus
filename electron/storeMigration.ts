@@ -1,4 +1,4 @@
-export const STORE_SCHEMA_VERSION = 3;
+export const STORE_SCHEMA_VERSION = 4;
 
 export type RectPct = {
   left: number;
@@ -67,6 +67,45 @@ export type StoredParagraphTranslation = {
   updated_at: string;
 };
 
+export type StoredDocumentViewState = {
+  version: 1;
+  updated_at?: string;
+  pdf?: {
+    page_index?: number;
+    scroll_top?: number;
+    scroll_left?: number;
+    zoom?: number;
+  };
+  reader_panel?: {
+    active_tab?: string;
+    collapsed?: boolean;
+    width?: number;
+    notes_mode?: string;
+    summary_mode?: string;
+    notes_scroll_top?: number;
+    summary_scroll_top?: number;
+  };
+  markdown?: {
+    mode?: string;
+    scroll_top?: number;
+    selection_start?: number;
+    selection_end?: number;
+  };
+  readerm?: {
+    mode?: string;
+    scroll_top?: number;
+    selection_start?: number;
+    selection_end?: number;
+    preview_scroll_top?: number;
+    source_view?: string;
+    source_document_id?: string;
+    source_anchor_id?: string;
+    active_reference_id?: string;
+    pdf_collapsed?: boolean;
+    pdf_pane_width?: number;
+  };
+};
+
 export type StoredDataV2 = {
   schema_version: typeof STORE_SCHEMA_VERSION;
   documents: Array<Record<string, unknown>>;
@@ -74,11 +113,12 @@ export type StoredDataV2 = {
   summaries: Record<string, { content: string; updated_at: string }>;
   anchors: StoredAnchor[];
   annotations: StoredAnnotation[];
-  ai_history?: Record<string, Array<{ role: "user" | "assistant"; content: string }>>;
+  ai_history?: Record<string, Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>>;
   symbols?: Record<string, Array<Record<string, unknown>>>;
   assets?: Array<Record<string, unknown>>;
   dictionary?: Array<Record<string, unknown>>;
   paragraph_translations?: Record<string, StoredParagraphTranslation[]>;
+  view_states?: Record<string, StoredDocumentViewState>;
   settings: Record<string, unknown>;
 };
 
@@ -299,8 +339,89 @@ function cleanParagraphTranslations(value: unknown) {
   return result;
 }
 
+function cleanFiniteNumber(value: unknown, min: number, max: number) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return undefined;
+  return Math.min(max, Math.max(min, number));
+}
+
+function cleanBoolean(value: unknown) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function cleanMode(value: unknown, allowed: string[]) {
+  return typeof value === "string" && allowed.includes(value) ? value : undefined;
+}
+
+function compactRecord<T extends Record<string, unknown>>(value: T): Partial<T> | undefined {
+  const entries = Object.entries(value).filter(([, entry]) => entry !== undefined);
+  return entries.length ? Object.fromEntries(entries) as Partial<T> : undefined;
+}
+
+function cleanDocumentViewState(value: unknown): StoredDocumentViewState | null {
+  if (!isRecord(value)) return null;
+  const pdf = compactRecord({
+    page_index: cleanFiniteNumber(value.pdf && isRecord(value.pdf) ? value.pdf.page_index : undefined, 0, 100000),
+    scroll_top: cleanFiniteNumber(value.pdf && isRecord(value.pdf) ? value.pdf.scroll_top : undefined, 0, 100000000),
+    scroll_left: cleanFiniteNumber(value.pdf && isRecord(value.pdf) ? value.pdf.scroll_left : undefined, 0, 100000000),
+    zoom: cleanFiniteNumber(value.pdf && isRecord(value.pdf) ? value.pdf.zoom : undefined, 0.1, 10),
+  });
+  const readerPanelSource = value.reader_panel && isRecord(value.reader_panel) ? value.reader_panel : {};
+  const readerPanel = compactRecord({
+    active_tab: cleanMode(readerPanelSource.active_tab, ["annotations", "notes", "summary", "symbols", "ai"]),
+    collapsed: cleanBoolean(readerPanelSource.collapsed),
+    width: cleanFiniteNumber(readerPanelSource.width, 180, 2000),
+    notes_mode: cleanMode(readerPanelSource.notes_mode, ["edit", "live", "preview"]),
+    summary_mode: cleanMode(readerPanelSource.summary_mode, ["edit", "live", "preview"]),
+    notes_scroll_top: cleanFiniteNumber(readerPanelSource.notes_scroll_top, 0, 100000000),
+    summary_scroll_top: cleanFiniteNumber(readerPanelSource.summary_scroll_top, 0, 100000000),
+  });
+  const markdownSource = value.markdown && isRecord(value.markdown) ? value.markdown : {};
+  const markdown = compactRecord({
+    mode: cleanMode(markdownSource.mode, ["edit", "live", "preview"]),
+    scroll_top: cleanFiniteNumber(markdownSource.scroll_top, 0, 100000000),
+    selection_start: cleanFiniteNumber(markdownSource.selection_start, 0, 100000000),
+    selection_end: cleanFiniteNumber(markdownSource.selection_end, 0, 100000000),
+  });
+  const readermSource = value.readerm && isRecord(value.readerm) ? value.readerm : {};
+  const readerm = compactRecord({
+    mode: cleanMode(readermSource.mode, ["edit", "live", "preview", "edit-preview"]),
+    scroll_top: cleanFiniteNumber(readermSource.scroll_top, 0, 100000000),
+    selection_start: cleanFiniteNumber(readermSource.selection_start, 0, 100000000),
+    selection_end: cleanFiniteNumber(readermSource.selection_end, 0, 100000000),
+    preview_scroll_top: cleanFiniteNumber(readermSource.preview_scroll_top, 0, 100000000),
+    source_view: cleanMode(readermSource.source_view, ["pdf", "markdown", "summary"]),
+    source_document_id: cleanString(readermSource.source_document_id) || undefined,
+    source_anchor_id: cleanString(readermSource.source_anchor_id) || undefined,
+    active_reference_id: cleanString(readermSource.active_reference_id) || undefined,
+    pdf_collapsed: cleanBoolean(readermSource.pdf_collapsed),
+    pdf_pane_width: cleanFiniteNumber(readermSource.pdf_pane_width, 180, 2000),
+  });
+  return {
+    version: 1,
+    updated_at: cleanString(value.updated_at) || undefined,
+    ...(pdf ? { pdf } : {}),
+    ...(readerPanel ? { reader_panel: readerPanel } : {}),
+    ...(markdown ? { markdown } : {}),
+    ...(readerm ? { readerm } : {}),
+  };
+}
+
+function cleanDocumentViewStates(value: unknown, documentIds: Set<string>) {
+  const result: Record<string, StoredDocumentViewState> = {};
+  if (!isRecord(value)) return result;
+  for (const [documentId, entry] of Object.entries(value)) {
+    if (!documentIds.has(documentId)) continue;
+    const cleaned = cleanDocumentViewState(entry);
+    if (cleaned) result[documentId] = cleaned;
+  }
+  return result;
+}
+
 export function migrateStoreToV3(input: unknown): StoredDataV2 {
   const source = isRecord(input) ? input : {};
+  const documents = Array.isArray(source.documents) ? source.documents.filter(isRecord) : [];
+  const documentIds = new Set(documents.map((document) => cleanString(document.document_id)).filter(Boolean));
   const anchors = (Array.isArray(source.anchors) ? source.anchors : [])
     .map(migrateAnchor)
     .filter((anchor): anchor is StoredAnchor => Boolean(anchor));
@@ -311,7 +432,7 @@ export function migrateStoreToV3(input: unknown): StoredDataV2 {
 
   return {
     schema_version: STORE_SCHEMA_VERSION,
-    documents: Array.isArray(source.documents) ? source.documents.filter(isRecord) : [],
+    documents,
     notes: cleanMap(source.notes),
     summaries: cleanMap(source.summaries),
     anchors,
@@ -321,6 +442,7 @@ export function migrateStoreToV3(input: unknown): StoredDataV2 {
     assets: Array.isArray(source.assets) ? source.assets.filter(isRecord) : [],
     dictionary: Array.isArray(source.dictionary) ? source.dictionary.filter(isRecord) : [],
     paragraph_translations: cleanParagraphTranslations(source.paragraph_translations),
+    view_states: cleanDocumentViewStates(source.view_states, documentIds),
     settings: cleanSettings(source.settings),
   };
 }

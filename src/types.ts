@@ -83,6 +83,46 @@ export type DocumentContext = {
   paragraph_translations?: ParagraphTranslation[];
   readerm_references?: ReadermReference[];
   referenced_documents?: LibraryDocument[];
+  view_state?: DocumentViewState | null;
+};
+
+export type DocumentViewState = {
+  version: 1;
+  updated_at?: string;
+  pdf?: {
+    page_index?: number;
+    scroll_top?: number;
+    scroll_left?: number;
+    zoom?: number;
+  };
+  reader_panel?: {
+    active_tab?: RightPanelTabKey;
+    collapsed?: boolean;
+    width?: number;
+    notes_mode?: MarkdownEditorMode;
+    summary_mode?: MarkdownEditorMode;
+    notes_scroll_top?: number;
+    summary_scroll_top?: number;
+  };
+  markdown?: {
+    mode?: MarkdownEditorMode;
+    scroll_top?: number;
+    selection_start?: number;
+    selection_end?: number;
+  };
+  readerm?: {
+    mode?: ReadermEditorMode;
+    scroll_top?: number;
+    selection_start?: number;
+    selection_end?: number;
+    preview_scroll_top?: number;
+    source_view?: ReaderDocumentViewMode;
+    source_document_id?: string;
+    source_anchor_id?: string;
+    active_reference_id?: string;
+    pdf_collapsed?: boolean;
+    pdf_pane_width?: number;
+  };
 };
 
 export type PackageHealthStatus = "ok" | "warning" | "error";
@@ -288,6 +328,9 @@ export type Settings = {
   ai_send_annotations_context: boolean;
   ai_send_loaded_pdf_text: boolean;
   ai_send_figure_attachments: boolean;
+  ai_redo_longer_prompt: string;
+  ai_redo_shorter_prompt: string;
+  ai_redo_try_again_prompt: string;
   simpletex_ocr_token: string;
   simpletex_ocr_enabled: boolean;
   translator_mode: "ai" | "api";
@@ -309,6 +352,7 @@ export type ReadermPreviewPosition = "right" | "bottom";
 
 export type MarkdownEditorMode = "edit" | "live" | "preview";
 export type ReadermEditorMode = MarkdownEditorMode | "edit-preview";
+export type RightPanelTabKey = "annotations" | "notes" | "summary" | "symbols" | "ai";
 
 export type AiTextContentPart = {
   type: "text";
@@ -378,6 +422,7 @@ export type FileAssociationStatus = {
   associated: boolean;
   associations: Array<{
     extension: FileAssociationExtension;
+    registered: boolean;
     associated: boolean;
   }>;
 };
@@ -469,7 +514,25 @@ export type ReaderPackageManifest = {
   };
 };
 
-export type ReaderPackageAiHistory = Array<{ role: "user" | "assistant"; content: string }>;
+export type AiRedoMode = "longer" | "shorter" | "try-again";
+
+export type AiHistoryVersion = {
+  user_content: string;
+  assistant_content: string;
+  redo_mode?: AiRedoMode;
+  prompt_append?: string;
+  created_at: string;
+};
+
+export type ReaderPackageAiMessage = {
+  role: "user" | "assistant";
+  content: string;
+  turn_id?: string;
+  current_version?: number;
+  versions?: AiHistoryVersion[];
+};
+
+export type ReaderPackageAiHistory = ReaderPackageAiMessage[];
 
 export type ReaderPackageAsset = {
   asset_id: string;

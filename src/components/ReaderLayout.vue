@@ -21,8 +21,8 @@ const emit = defineEmits<{
 const gridRef = ref<HTMLElement | null>(null);
 const resizeHandleWidth = 3;
 const defaultPanelWidth = 560;
-const minPdfWidth = 620;
-const minPanelWidth = 320;
+const minPdfWidth = 520;
+const minPanelWidth = 280;
 const maxPanelWidth = 860;
 const layoutGutter = 12;
 const gridWidth = ref(0);
@@ -33,7 +33,7 @@ const clampedRightPanelWidth = computed(() => clampRightPanelWidth(props.rightPa
 
 const gridStyle = computed(() => ({
   gridTemplateColumns: [
-    "minmax(620px, 1fr)",
+    "minmax(520px, 1fr)",
     props.collapsed ? "0" : `${resizeHandleWidth}px`,
     props.collapsed ? "var(--rail-collapsed-width)" : `${clampedRightPanelWidth.value}px`,
   ].join(" "),

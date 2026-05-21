@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ArrowUp,
   Bot,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   Plus,
+  Minus,
   Pencil,
   FunnelX,
   ImagePlus,
@@ -22,12 +26,12 @@ import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import { readerPanelTabs, type RightPanelTab } from "@/components/ReaderPanelTabs";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
 import UiDropdown from "@/components/UiDropdown.vue";
-import { useMarkdownZoom } from "@/composables/useMarkdownZoom";
+import { scaledMarkdownLineHeight, useMarkdownZoom } from "@/composables/useMarkdownZoom";
 import { useI18n } from "@/i18n";
 import { markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import { hasActiveAnnotationFilters, parseTagsInput, type AnnotationFilters } from "@/services/ReaderAnnotationService";
 import { displaySymbolText, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { Annotation, AnnotationType, MarkdownEditorMode, Settings, SymbolDefinition } from "@/types";
+import type { AiRedoMode, Annotation, AnnotationType, MarkdownEditorMode, ReaderPackageAiHistory, ReaderPackageAiMessage, Settings, SymbolDefinition } from "@/types";
 
 const props = defineProps<{
   activeTab: RightPanelTab;
@@ -42,10 +46,11 @@ const props = defineProps<{
   activeAnnotation: Annotation | null;
   annotationFilters: AnnotationFilters;
   agentLabel: string;
-  aiMessages: Array<{ role: "user" | "assistant"; content: string }>;
+  aiMessages: ReaderPackageAiHistory;
   aiInput: string;
   aiLoading: boolean;
   summaryWaiting: boolean;
+  aiSummaryOutputChars?: number | null;
   symbols: SymbolDefinition[];
   activeSymbol: string;
   symbolRefreshProgress: { status: string; percent?: number } | null;
@@ -69,6 +74,9 @@ const emit = defineEmits<{
   (event: "pasteImage", payload: { target: "notes" | "summary"; dataUrl: string; selection?: { start: number; end: number } }): void;
   (event: "resizeImage", payload: { target: "notes" | "summary"; assetPath: string }): void;
   (event: "sendAi", value?: "chat" | "summary"): void;
+  (event: "editAiTurn", payload: { turnId: string; content: string }): void;
+  (event: "redoAiTurn", payload: { turnId: string; mode: AiRedoMode }): void;
+  (event: "showAiTurnVersion", payload: { turnId: string; versionIndex: number }): void;
   (event: "stopAi"): void;
   (event: "selectAnnotation", annotation: Annotation): void;
   (event: "updateAnnotation", payload: { annotation: Annotation; patch: { type?: AnnotationType; color?: string; comment?: string; tags?: string[] } }): void;
@@ -123,13 +131,59 @@ const filteredSymbols = computed(() => {
 });
 
 const summaryIsEmpty = computed(() => !props.summaryDraft.trim());
-const summaryActionLabel = computed(() => props.summaryWaiting ? t("common.waiting") : t("summary.aiSummary"));
+const summaryActionLabel = computed(() => {
+  return props.summaryWaiting ? t("ai.thinking") : t("summary.aiSummary");
+});
+const summaryStatusLabel = computed(() => t("summary.outputChars", { count: props.aiSummaryOutputChars || 0 }));
 const aiInputHasText = computed(() => Boolean(props.aiInput.trim()));
+type AiTurnView = {
+  turnId: string;
+  userContent: string;
+  assistantContent: string;
+  currentVersion: number;
+  totalVersions: number;
+};
+
+function currentVersionIndex(message: ReaderPackageAiMessage | undefined) {
+  const total = message?.versions?.length || 0;
+  if (!message || !total) return 0;
+  const index = Number(message.current_version);
+  return Number.isFinite(index) ? Math.min(total - 1, Math.max(0, Math.trunc(index))) : total - 1;
+}
+
+const aiTurns = computed<AiTurnView[]>(() => {
+  const turns: AiTurnView[] = [];
+  for (let index = 0; index < props.aiMessages.length; index += 1) {
+    const user = props.aiMessages[index];
+    if (user.role !== "user") continue;
+    const assistantIndex = props.aiMessages.findIndex((message, candidate) => candidate > index && message.role === "assistant");
+    const assistant = assistantIndex >= 0 ? props.aiMessages[assistantIndex] : undefined;
+    const currentVersion = currentVersionIndex(assistant);
+    const version = assistant?.versions?.[currentVersion];
+    turns.push({
+      turnId: user.turn_id || assistant?.turn_id || `legacy-${index}`,
+      userContent: version?.user_content || user.content,
+      assistantContent: version?.assistant_content || assistant?.content || "",
+      currentVersion,
+      totalVersions: Math.max(1, assistant?.versions?.length || 1),
+    });
+  }
+  return turns;
+});
+
 const noteTextarea = ref<HTMLTextAreaElement | null>(null);
 const summaryTextarea = ref<HTMLTextAreaElement | null>(null);
+const noteLiveEditor = ref<InstanceType<typeof LiveMarkdownEditor> | null>(null);
+const summaryLiveEditor = ref<InstanceType<typeof LiveMarkdownEditor> | null>(null);
+const notePreviewRoot = ref<HTMLElement | null>(null);
+const summaryPreviewRoot = ref<HTMLElement | null>(null);
+const aiMessagesRoot = ref<HTMLElement | null>(null);
 const aiTextarea = ref<HTMLTextAreaElement | null>(null);
+const editingAiTurnId = ref("");
+const aiEditDraft = ref("");
+const openRedoTurnId = ref("");
 const { markdownFontSize, handleMarkdownWheel } = useMarkdownZoom();
-const markdownLineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const markdownLineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const markdownCodeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
 const markdownCodeLineHeight = computed(() => props.settings?.markdown_code_line_height || 1.22);
 const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
@@ -150,18 +204,88 @@ function resizeAiTextarea() {
   textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
+async function scrollAiMessagesToBottom() {
+  if (props.activeTab !== "ai") return;
+  await nextTick();
+  const root = aiMessagesRoot.value;
+  if (!root) return;
+  root.scrollTop = root.scrollHeight;
+}
+
 function updateAiInput(event: Event) {
   emit("update:aiInput", (event.target as HTMLTextAreaElement).value);
   resizeAiTextarea();
 }
 
+async function copyText(value: string) {
+  await navigator.clipboard?.writeText(value);
+}
+
+function startEditAiTurn(turn: AiTurnView) {
+  editingAiTurnId.value = turn.turnId;
+  aiEditDraft.value = turn.userContent;
+  openRedoTurnId.value = "";
+}
+
+function cancelEditAiTurn() {
+  editingAiTurnId.value = "";
+  aiEditDraft.value = "";
+}
+
+function submitEditAiTurn(turn: AiTurnView) {
+  const content = aiEditDraft.value.trim();
+  if (!content || props.aiLoading) return;
+  emit("editAiTurn", { turnId: turn.turnId, content });
+  cancelEditAiTurn();
+}
+
+function toggleRedoMenu(turnId: string) {
+  openRedoTurnId.value = openRedoTurnId.value === turnId ? "" : turnId;
+}
+
+function handleGlobalPointerDown(event: PointerEvent) {
+  if (!openRedoTurnId.value) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(".ai-redo-wrap")) return;
+  openRedoTurnId.value = "";
+}
+
+function redoAiTurn(turnId: string, mode: AiRedoMode) {
+  openRedoTurnId.value = "";
+  if (props.aiLoading) return;
+  emit("redoAiTurn", { turnId, mode });
+}
+
+function showAiTurnVersion(turn: AiTurnView, direction: -1 | 1) {
+  const next = turn.currentVersion + direction;
+  if (next < 0 || next >= turn.totalVersions || props.aiLoading) return;
+  emit("showAiTurnVersion", { turnId: turn.turnId, versionIndex: next });
+}
+
+function isAiTurnThinking(turn: AiTurnView) {
+  return props.aiLoading && !turn.assistantContent.trim();
+}
+
 onMounted(() => {
   resizeAiTextarea();
+  window.addEventListener("pointerdown", handleGlobalPointerDown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("pointerdown", handleGlobalPointerDown);
 });
 
 watch(() => props.aiInput, async () => {
   await nextTick();
   resizeAiTextarea();
+});
+
+watch(() => props.activeTab, () => {
+  void scrollAiMessagesToBottom();
+});
+
+watch(() => aiTurns.value.map((turn) => `${turn.turnId}:${turn.currentVersion}:${turn.totalVersions}:${turn.userContent.length}:${turn.assistantContent.length}`).join("|"), () => {
+  void scrollAiMessagesToBottom();
 });
 
 function updateTypeFilter(value: string) {
@@ -256,9 +380,48 @@ function currentNoteSelection() {
   return currentMarkdownSelection("notes");
 }
 
+function currentMarkdownViewState(target: "notes" | "summary") {
+  if (props.activeTab !== target) return undefined;
+  const mode = target === "notes" ? props.notesMode : props.summaryMode;
+  const textarea = target === "notes" ? noteTextarea.value : summaryTextarea.value;
+  const liveEditor = target === "notes" ? noteLiveEditor.value : summaryLiveEditor.value;
+  const previewRoot = target === "notes" ? notePreviewRoot.value : summaryPreviewRoot.value;
+  if (mode === "live") return liveEditor?.currentViewState() || {};
+  if (mode === "preview") return { scroll_top: previewRoot?.scrollTop || 0 };
+  return {
+    scroll_top: textarea?.scrollTop || 0,
+    selection_start: textarea?.selectionStart ?? liveSelections.value[target]?.start ?? 0,
+    selection_end: textarea?.selectionEnd ?? liveSelections.value[target]?.end ?? 0,
+  };
+}
+
+async function restoreMarkdownViewState(target: "notes" | "summary", state?: { scroll_top?: number; selection_start?: number; selection_end?: number } | null) {
+  if (!state) return;
+  await nextTick();
+  const mode = target === "notes" ? props.notesMode : props.summaryMode;
+  const textarea = target === "notes" ? noteTextarea.value : summaryTextarea.value;
+  const liveEditor = target === "notes" ? noteLiveEditor.value : summaryLiveEditor.value;
+  const previewRoot = target === "notes" ? notePreviewRoot.value : summaryPreviewRoot.value;
+  if (mode === "live") {
+    liveEditor?.restoreViewState(state);
+    return;
+  }
+  if (mode === "preview") {
+    if (previewRoot) previewRoot.scrollTop = state.scroll_top || 0;
+    return;
+  }
+  if (!textarea) return;
+  textarea.scrollTop = state.scroll_top || 0;
+  const start = Math.max(0, Math.min(state.selection_start ?? 0, textarea.value.length));
+  const end = Math.max(0, Math.min(state.selection_end ?? start, textarea.value.length));
+  textarea.setSelectionRange(start, end);
+}
+
 defineExpose({
   currentMarkdownSelection,
+  currentMarkdownViewState,
   currentNoteSelection,
+  restoreMarkdownViewState,
 });
 
 function symbolLabelSource(symbol: SymbolDefinition) {
@@ -438,13 +601,15 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
         @input="emit('update:noteDraft', ($event.target as HTMLTextAreaElement).value)"
         @paste="handleTextareaPaste($event, 'notes')"
       />
-      <LiveMarkdownEditor v-else-if="notesMode === 'live'" :model-value="noteDraft" :document-id="documentId" :font-size="markdownFontSize" :settings="settings" @update:model-value="emit('update:noteDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('notes', $event)" @image-insert="emit('insertImage', { target: 'notes', selection: $event.selection, kind: $event.kind })" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" @update-settings="emit('updateSettings', $event)" @selection-change="liveSelections.notes = $event" />
-      <MarkdownPreview v-else :source="noteDraft || t('markdown.noNotes')" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" />
+      <LiveMarkdownEditor ref="noteLiveEditor" v-else-if="notesMode === 'live'" :model-value="noteDraft" :document-id="documentId" :font-size="markdownFontSize" :settings="settings" @update:model-value="emit('update:noteDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('notes', $event)" @image-insert="emit('insertImage', { target: 'notes', selection: $event.selection, kind: $event.kind })" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" @update-settings="emit('updateSettings', $event)" @selection-change="liveSelections.notes = $event" />
+      <div v-else ref="notePreviewRoot" class="markdown-panel-preview">
+        <MarkdownPreview :source="noteDraft || t('markdown.noNotes')" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'notes', assetPath: $event.assetPath })" />
+      </div>
     </section>
 
     <section
       v-else-if="activeTab === 'summary'"
-      class="panel-body markdown-resize-scope"
+      class="panel-body markdown-resize-scope summary-panel"
       :style="{ '--markdown-editor-font-size': `${markdownFontSize}px`, '--markdown-line-height': markdownLineHeight, '--markdown-code-font-family': markdownCodeFontFamilyCss, '--markdown-code-font-scale': markdownCodeFontScale, '--markdown-code-line-height': markdownCodeLineHeight }"
       @wheel="handleMarkdownWheel"
     >
@@ -461,13 +626,16 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
         @input="emit('update:summaryDraft', ($event.target as HTMLTextAreaElement).value)"
         @paste="handleTextareaPaste($event, 'summary')"
       />
-      <LiveMarkdownEditor v-else-if="summaryMode === 'live'" :model-value="summaryDraft" :document-id="documentId" :font-size="markdownFontSize" :settings="settings" @update:model-value="emit('update:summaryDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('summary', $event)" @image-insert="emit('insertImage', { target: 'summary', selection: $event.selection, kind: $event.kind })" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" @update-settings="emit('updateSettings', $event)" @selection-change="liveSelections.summary = $event" />
+      <LiveMarkdownEditor ref="summaryLiveEditor" v-else-if="summaryMode === 'live'" :model-value="summaryDraft" :document-id="documentId" :font-size="markdownFontSize" :settings="settings" @update:model-value="emit('update:summaryDraft', $event)" @link-click="emit('linkClick', $event)" @image-paste="forwardLivePaste('summary', $event)" @image-insert="emit('insertImage', { target: 'summary', selection: $event.selection, kind: $event.kind })" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" @update-settings="emit('updateSettings', $event)" @selection-change="liveSelections.summary = $event" />
       <div v-else-if="summaryIsEmpty" class="empty-summary">
         <p>{{ t("summary.empty") }}</p>
       </div>
-      <MarkdownPreview v-else :source="summaryDraft" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" />
+      <div v-else ref="summaryPreviewRoot" class="markdown-panel-preview">
+        <MarkdownPreview :source="summaryDraft" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" @image-context="emit('resizeImage', { target: 'summary', assetPath: $event.assetPath })" />
+      </div>
       <div class="summary-ai-action-region">
         <button type="button" class="secondary ai-summary-button" :disabled="aiLoading" @click="emit('sendAi', 'summary')"><Bot :size="16" /> {{ summaryActionLabel }}</button>
+        <div v-if="summaryWaiting" class="summary-ai-status">{{ summaryStatusLabel }}</div>
       </div>
     </section>
 
@@ -546,10 +714,58 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
     </section>
 
     <section v-else class="panel-body ai-tab">
-      <div class="ai-messages">
-        <article v-for="(message, index) in aiMessages" :key="index" :class="['ai-message', message.role]">
-          <MarkdownPreview :source="message.content" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
-        </article>
+      <div ref="aiMessagesRoot" class="ai-messages">
+        <template v-for="turn in aiTurns" :key="turn.turnId">
+          <article class="ai-message user" :class="{ editing: editingAiTurnId === turn.turnId }">
+            <template v-if="editingAiTurnId === turn.turnId">
+              <textarea
+                v-model="aiEditDraft"
+                class="ai-edit-input"
+                rows="3"
+                @keydown.ctrl.enter.prevent="submitEditAiTurn(turn)"
+              />
+              <div class="ai-edit-actions">
+                <button type="button" @click="cancelEditAiTurn">{{ t("common.cancel") }}</button>
+                <button type="button" class="primary" :disabled="aiLoading || !aiEditDraft.trim()" @click="submitEditAiTurn(turn)">{{ t("common.send") }}</button>
+              </div>
+            </template>
+            <template v-else>
+              <MarkdownPreview :source="turn.userContent" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
+              <div class="ai-message-actions user-actions">
+                <button type="button" :title="t('common.copy')" @click="copyText(turn.userContent)"><Copy :size="15" /></button>
+                <button type="button" :title="t('common.edit')" :disabled="aiLoading" @click="startEditAiTurn(turn)"><Pencil :size="15" /></button>
+              </div>
+            </template>
+          </article>
+          <article class="ai-message assistant">
+            <div v-if="isAiTurnThinking(turn)" class="ai-thinking-indicator" role="status" aria-live="polite">
+              {{ t("ai.thinking") }}
+            </div>
+            <MarkdownPreview v-else :source="turn.assistantContent" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
+            <div v-if="turn.assistantContent.trim()" class="ai-answer-toolbar">
+              <div class="ai-answer-actions">
+                <div class="ai-redo-wrap">
+                  <button type="button" class="ai-icon-action" :title="t('ai.redo')" :disabled="aiLoading" @click="toggleRedoMenu(turn.turnId)">
+                    <RefreshCw :size="16" />
+                  </button>
+                  <div v-if="openRedoTurnId === turn.turnId" class="ai-redo-menu">
+                    <button type="button" @click="redoAiTurn(turn.turnId, 'longer')"><Plus :size="16" /> {{ t("ai.redoLonger") }}</button>
+                    <button type="button" @click="redoAiTurn(turn.turnId, 'shorter')"><Minus :size="16" /> {{ t("ai.redoShorter") }}</button>
+                    <button type="button" @click="redoAiTurn(turn.turnId, 'try-again')"><RefreshCw :size="16" /> {{ t("ai.redoTryAgain") }}</button>
+                  </div>
+                </div>
+                <button type="button" class="ai-icon-action" :title="t('common.copy')" @click="copyText(turn.assistantContent)">
+                  <Copy :size="16" />
+                </button>
+              </div>
+              <div v-if="turn.totalVersions > 1" class="ai-version-switch">
+                <button type="button" :disabled="aiLoading || turn.currentVersion <= 0" @click="showAiTurnVersion(turn, -1)"><ChevronLeft :size="17" /></button>
+                <span>{{ turn.currentVersion + 1 }} / {{ turn.totalVersions }}</span>
+                <button type="button" :disabled="aiLoading || turn.currentVersion >= turn.totalVersions - 1" @click="showAiTurnVersion(turn, 1)"><ChevronRight :size="17" /></button>
+              </div>
+            </div>
+          </article>
+        </template>
       </div>
       <div class="ai-composer">
         <textarea

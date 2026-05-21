@@ -7,7 +7,9 @@ type AiMessage = AiChatRequest["messages"][number];
 const PROVENANCE_RULES = [
   "Use only the provided reader evidence for citations.",
   "For every key claim, include an Evidence line.",
-  "When evidence exists, format it as Evidence: [p. N](/reader?documentId=...&anchor=...).",
+  "When evidence exists, copy one of the provided reader links exactly and format it as Evidence: [p. N](/reader?documentId=...&anchor=...).",
+  "Do not describe evidence without a Markdown reader link when a matching reader link is available.",
+  "If answering in Chinese, still include the Markdown Evidence line with the exact /reader link.",
   "When no evidence supports a claim, write Evidence: Needs verification.",
 ].join("\n");
 
@@ -187,7 +189,7 @@ export function buildSummaryMessages(payload: ReaderContextPayload, summaryTempl
   }];
 }
 
-export function buildChatMessages(payload: ReaderContextPayload, userInput: string): AiMessage[] {
+export function buildChatMessages(payload: ReaderContextPayload, userInput: string, additionalInstruction = ""): AiMessage[] {
   return [{
     role: "user",
     content: [
@@ -195,8 +197,17 @@ export function buildChatMessages(payload: ReaderContextPayload, userInput: stri
       "",
       contextHeader(payload),
       "",
+      "Loaded PDF text context:",
+      loadedTextContext(payload),
+      "",
+      "Output requirements:",
+      payload.evidences.length
+        ? "Every explanatory paragraph or bullet must include an Evidence line using one exact reader link from Reader evidence."
+        : "No reader evidence is available; do not output /reader links.",
+      "",
       "User question:",
       userInput,
+      additionalInstruction.trim() ? `\nAdditional instruction:\n${additionalInstruction.trim()}` : "",
     ].join("\n"),
   }];
 }

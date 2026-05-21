@@ -47,10 +47,10 @@ import {
   ShieldAlert,
   TriangleAlert,
 } from "lucide-vue-next";
-import { EditorState, Prec, StateEffect, type Extension } from "@codemirror/state";
+import { EditorState, Prec, StateEffect, type EditorSelection, type Extension, type Text } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";
-import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
@@ -102,6 +102,7 @@ import {
 import { markdownBodyFontFamily, markdownCodeFontFamily, markdownFontOptions } from "@/services/MarkdownFontOptionsService";
 import { silkdownPlugin } from "@/vendor/silkdown/plugin";
 import { baseTheme as silkdownBaseTheme } from "@/vendor/silkdown/theme";
+import { scaledMarkdownLineHeight } from "@/composables/useMarkdownZoom";
 import type { Settings } from "@/types";
 
 const props = defineProps<{ modelValue: string; placeholder?: string; documentId?: string; fontSize?: number; settings?: Settings | null }>();
@@ -553,17 +554,26 @@ const MATH_GROUP_PREVIEW_LATEX: Record<string, string> = {
 const assetUrlCache = createLruStringCache(50);
 let view: EditorView | null = null;
 let syncingFromEditor = false;
+let isComposing = false;
 let assetResolveTimer: number | null = null;
 let modelUpdateTimer: number | null = null;
+let renderedTextRevealTimer: number | null = null;
+let renderedTextRevealUntil = 0;
+let renderedTextHideTimer: number | null = null;
+let renderedTextHideUntil = 0;
+let renderedTextHideSelection: EditorSelection | null = null;
 
 const placeholderText = computed(() => props.placeholder || t("liveMarkdown.placeholder"));
 const markdownFontFamilyCss = computed(() => markdownBodyFontFamily(props.settings?.markdown_font_family || "current"));
 const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
-const markdownLineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const markdownLineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const markdownCodeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
 const markdownCodeLineHeight = computed(() => props.settings?.markdown_code_line_height || 1.22);
 
 const assetUrlEffect = StateEffect.define<Map<string, string>>();
+const renderedTextRevealRefreshEffect = StateEffect.define<void>();
+const RENDERED_TEXT_REVEAL_DELAY_MS = 300;
+const RENDERED_TEXT_HIDE_DELAY_MS = 300;
 const VIEWPORT_STABILIZING_WIDGET_SELECTOR = [
   ".sd-live-block",
   ".sd-live-block-editor-widget",
@@ -656,6 +666,7 @@ function tableRangeAtPosition(source: string, position: number): SourceSelection
 
 function redirectHiddenTableInput() {
   return EditorState.transactionFilter.of((transaction) => {
+    if (isComposing || view?.composing) return transaction;
     if (!transaction.docChanged || !transaction.isUserEvent("input.type")) return transaction;
     const source = transaction.startState.doc.toString();
     const selection = transaction.startState.selection.main;
@@ -687,6 +698,7 @@ function redirectHiddenTableInput() {
 
 function replaceCodeLigatureInput() {
   return EditorState.transactionFilter.of((transaction) => {
+    if (isComposing || view?.composing) return transaction;
     if (props.settings?.markdown_code_ligatures === false) return transaction;
     if (!transaction.docChanged || !transaction.isUserEvent("input.type")) return transaction;
     const selection = transaction.startState.selection.main;
@@ -711,6 +723,57 @@ function replaceCodeLigatureInput() {
       selection: { anchor: replacement.start + replacement.text.length },
       scrollIntoView: true,
     };
+  });
+}
+
+function selectionHasRevealableSource(doc: Text, selection: EditorSelection) {
+  for (const range of selection.ranges) {
+    const from = Math.max(0, Math.min(doc.length, range.from));
+    const to = Math.max(0, Math.min(doc.length, range.empty ? range.from : range.to));
+    const fromLine = doc.lineAt(from).number;
+    const toLine = doc.lineAt(to > from ? Math.max(from, to - 1) : to).number;
+    for (let lineNumber = fromLine; lineNumber <= toLine; lineNumber += 1) {
+      if (lineHasRevealableSource(doc.line(lineNumber).text)) return true;
+    }
+  }
+  return false;
+}
+
+function selectionsEqual(left: EditorSelection, right: EditorSelection) {
+  if (left.ranges.length !== right.ranges.length) return false;
+  return left.ranges.every((range, index) => {
+    const other = right.ranges[index];
+    return range.anchor === other.anchor && range.head === other.head;
+  });
+}
+
+function deferRenderedTextRevealOnPointerSelection() {
+  return EditorState.transactionExtender.of((transaction) => {
+    if (!transaction.selection) return null;
+    if (isComposing || view?.composing) return null;
+    const selection = transaction.newSelection.main;
+    if (transaction.docChanged) {
+      clearRenderedTextHideTimer();
+      renderedTextHideSelection = null;
+    } else if (selectionHasRevealableSource(transaction.newDoc, transaction.newSelection)) {
+      if (
+        selectionHasRevealableSource(transaction.startState.doc, transaction.startState.selection)
+        && !selectionsEqual(transaction.startState.selection, transaction.newSelection)
+        && view
+      ) {
+        renderedTextHideSelection = transaction.startState.selection;
+        deferRenderedTextHide(view);
+      } else {
+        clearRenderedTextHideTimer();
+        renderedTextHideSelection = null;
+      }
+    } else if (renderedTextHideSelection && view) {
+      deferRenderedTextHide(view);
+    }
+    if (transaction.isUserEvent("select.pointer") && selection.empty && selectionHasRevealableSource(transaction.newDoc, transaction.newSelection) && view) {
+      deferRenderedTextReveal(view);
+    }
+    return null;
   });
 }
 
@@ -821,7 +884,7 @@ function activeDelimitedMarkAt(source: string, position: number, marker: string)
 }
 
 function updateToolbarState() {
-  if (!view) return;
+  if (!view || isComposing || view.composing) return;
   const selection = selectionRange();
   hasSelection.value = selection.start !== selection.end;
   const position = selection.start;
@@ -1589,10 +1652,11 @@ async function resolveEditorAssetImages() {
       }
     }
   }
-  if (changed && view) view.dispatch({ effects: assetUrlEffect.of(assetUrlCache.snapshot()) });
+  if (changed && view && !isComposing && !view.composing) view.dispatch({ effects: assetUrlEffect.of(assetUrlCache.snapshot()) });
 }
 
 function scheduleResolveEditorAssetImages() {
+  if (isComposing || view?.composing) return;
   if (assetResolveTimer !== null) window.clearTimeout(assetResolveTimer);
   assetResolveTimer = window.setTimeout(() => {
     assetResolveTimer = null;
@@ -1985,12 +2049,245 @@ function beginTableDragCandidate(event: PointerEvent, cell: HTMLTableCellElement
 }
 
 function handleEditorRootPointerDown(event: PointerEvent) {
+  if (handleRenderedTextPointerDown(event)) return;
+  if (suppressRenderedBlankPointerDown(event)) return;
   const target = event.target as HTMLElement | null;
   const cell = target?.closest(".sd-table-widget th, .sd-table-widget td") as HTMLTableCellElement | null;
   if (!cell || target?.closest(".sd-table-col-resizer")) return;
   event.preventDefault();
   event.stopPropagation();
   beginTableDragCandidate(event, cell);
+}
+
+function handleEditorRootMouseDown(event: MouseEvent) {
+  if (handleRenderedTextPointerDown(event)) return;
+  suppressRenderedBlankPointerDown(event);
+}
+
+const RENDERED_INTERACTION_SELECTOR = [
+  ".sd-table-widget",
+  ".sd-table-col-resizer",
+  ".sd-image-source",
+  ".sd-image-widget",
+  ".sd-image-frame",
+  ".sd-image-anchor",
+  ".markdown-html-image",
+  ".sd-live-block-render-toolbar",
+  ".sd-live-block-editor-widget",
+  ".sd-live-block-content button",
+  ".sd-math-block-content",
+  "a",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "[contenteditable='true']",
+].join(",");
+
+const RENDERED_TEXT_POINTER_BYPASS_SELECTOR = [
+  ".sd-table-widget",
+  ".sd-table-col-resizer",
+  ".sd-image-source",
+  ".sd-image-widget",
+  ".sd-image-frame",
+  ".sd-image-anchor",
+  ".markdown-html-image",
+  ".sd-live-block-render-toolbar",
+  ".sd-live-block-editor-widget",
+  ".sd-live-block-content button",
+  ".sd-math-block-content",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "[contenteditable='true']",
+].join(",");
+
+function eventTargetElement(event: Event) {
+  const target = event.target;
+  if (target instanceof Element) return target;
+  return target instanceof Node ? target.parentElement : null;
+}
+
+function caretRangeFromPoint(x: number, y: number) {
+  const documentWithCaret = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const position = documentWithCaret.caretPositionFromPoint?.(x, y);
+  if (position) {
+    const range = document.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    range.collapse(true);
+    return range;
+  }
+  return documentWithCaret.caretRangeFromPoint?.(x, y) || null;
+}
+
+function pointHitsTextGlyph(x: number, y: number) {
+  const range = caretRangeFromPoint(x, y);
+  const node = range?.startContainer;
+  if (!range || !node || node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) return false;
+  const offset = range.startOffset;
+  const textLength = node.textContent.length;
+  const candidates = [
+    [Math.max(0, offset - 1), Math.min(textLength, offset)],
+    [Math.max(0, offset), Math.min(textLength, offset + 1)],
+  ] as const;
+  for (const [start, end] of candidates) {
+    if (end <= start) continue;
+    const probe = document.createRange();
+    probe.setStart(node, start);
+    probe.setEnd(node, end);
+    const rects = Array.from(probe.getClientRects());
+    probe.detach();
+    if (rects.some((rect) =>
+      rect.width > 0
+      && rect.height > 0
+      && x >= rect.left - 2
+      && x <= rect.right + 2
+      && y >= rect.top - 2
+      && y <= rect.bottom + 2)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pointHitsEditorText(position: number, x: number, y: number) {
+  if (!view) return false;
+  if (pointHitsTextGlyph(x, y)) return true;
+  const line = view.state.doc.lineAt(position);
+  const probes = new Set<number>();
+  probes.add(Math.max(line.from, Math.min(line.to, position)));
+  probes.add(Math.max(line.from, Math.min(line.to, position - 1)));
+  probes.add(Math.max(line.from, Math.min(line.to, position + 1)));
+  for (const probe of probes) {
+    const rect = view.coordsAtPos(probe);
+    if (!rect) continue;
+    const nearY = y >= rect.top - 4 && y <= rect.bottom + 4;
+    const nearX = x >= Math.min(rect.left, rect.right) - 12 && x <= Math.max(rect.left, rect.right) + 12;
+    if (nearX && nearY) return true;
+  }
+  return false;
+}
+
+function renderedLinePositionAtEvent(event: MouseEvent) {
+  if (!view) return null;
+  const target = eventTargetElement(event);
+  if (!target) return null;
+  const lineElement = target.closest(".cm-line");
+  if (!lineElement || !editorRoot.value?.contains(lineElement)) return null;
+  const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (position === null || position === undefined || Number.isNaN(position)) return null;
+  const line = view.state.doc.lineAt(position);
+  if (!lineHasRevealableSource(line.text)) return null;
+  return { position, line };
+}
+
+function suppressRenderedBlankPointerDown(event: MouseEvent) {
+  const target = eventTargetElement(event);
+  if (!target || target.closest(RENDERED_INTERACTION_SELECTOR)) return false;
+  const hit = renderedLinePositionAtEvent(event);
+  if (!hit) return false;
+  if (pointHitsEditorText(hit.position, event.clientX, event.clientY)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
+function lineHasRevealableSource(lineText: string) {
+  return /^#{1,6}\s+/.test(lineText)
+    || /(?:\*\*|__|~~|`|\[.+?\]\(.+?\)|<u>|<\/u>|<span\s+style=|<\/span>|==|\$)/i.test(lineText)
+    || /(^|[^\\])(?:\*|_)[^\s*_]/.test(lineText);
+}
+
+function clearRenderedTextRevealTimer() {
+  if (renderedTextRevealTimer !== null) {
+    window.clearTimeout(renderedTextRevealTimer);
+    renderedTextRevealTimer = null;
+  }
+  renderedTextRevealUntil = 0;
+}
+
+function clearRenderedTextHideTimer() {
+  if (renderedTextHideTimer !== null) {
+    window.clearTimeout(renderedTextHideTimer);
+    renderedTextHideTimer = null;
+  }
+  renderedTextHideUntil = 0;
+}
+
+function shouldSuppressRenderedTextReveal() {
+  return performance.now() < renderedTextRevealUntil;
+}
+
+function currentRenderedTextRevealSelection() {
+  return renderedTextHideSelection && performance.now() < renderedTextHideUntil
+    ? renderedTextHideSelection
+    : null;
+}
+
+function deferRenderedTextReveal(editorView: EditorView) {
+  clearRenderedTextRevealTimer();
+  renderedTextRevealUntil = performance.now() + RENDERED_TEXT_REVEAL_DELAY_MS;
+  renderedTextRevealTimer = window.setTimeout(() => {
+    renderedTextRevealTimer = null;
+    renderedTextRevealUntil = 0;
+    if (view === editorView) {
+      editorView.dispatch({ effects: renderedTextRevealRefreshEffect.of(undefined) });
+    }
+  }, RENDERED_TEXT_REVEAL_DELAY_MS);
+}
+
+function deferRenderedTextHide(editorView: EditorView) {
+  if (renderedTextHideTimer !== null) return;
+  if (RENDERED_TEXT_HIDE_DELAY_MS <= 0) {
+    renderedTextHideSelection = null;
+    renderedTextHideUntil = 0;
+    return;
+  }
+  renderedTextHideUntil = performance.now() + RENDERED_TEXT_HIDE_DELAY_MS;
+  renderedTextHideTimer = window.setTimeout(() => {
+    renderedTextHideTimer = null;
+    renderedTextHideUntil = 0;
+    renderedTextHideSelection = null;
+    if (view === editorView) {
+      editorView.dispatch({ effects: renderedTextRevealRefreshEffect.of(undefined) });
+    }
+  }, RENDERED_TEXT_HIDE_DELAY_MS);
+}
+
+function handleRenderedTextPointerDown(event: MouseEvent) {
+  if (!view || event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
+  const target = eventTargetElement(event);
+  if (!target || target.closest(RENDERED_TEXT_POINTER_BYPASS_SELECTOR)) return false;
+  const hit = renderedLinePositionAtEvent(event);
+  if (!hit) return false;
+  if (!pointHitsEditorText(hit.position, event.clientX, event.clientY)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const targetView = view;
+  deferRenderedTextReveal(targetView);
+  targetView.dispatch({ selection: { anchor: hit.position } });
+  targetView.focus();
+  publishSelection(targetView.state);
+  updateToolbarState();
+  return true;
+}
+
+function handleCompositionStart() {
+  isComposing = true;
+}
+
+function handleCompositionEnd() {
+  void nextTick(() => {
+    isComposing = false;
+    flushModelUpdate();
+    publishSelection();
+    updateToolbarState();
+    scheduleResolveEditorAssetImages();
+  });
 }
 
 function handleTablePointerDown(event: PointerEvent) {
@@ -2083,6 +2380,7 @@ async function handlePaste(event: ClipboardEvent) {
 
 function flushModelUpdate() {
   if (!view) return;
+  if (isComposing || view.composing) return;
   if (modelUpdateTimer !== null) {
     window.clearTimeout(modelUpdateTimer);
     modelUpdateTimer = null;
@@ -2265,15 +2563,19 @@ function createState(markdownSource: string) {
         addKeymap: false,
       }),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      indentUnit.of("    "),
       placeholder(placeholderText.value),
       redirectHiddenTableInput(),
       replaceCodeLigatureInput(),
+      deferRenderedTextRevealOnPointerSelection(),
       preserveViewportOnSelectionChange(),
       silkdownPlugin({
         codeLineNumbers: props.settings?.markdown_code_line_numbers !== false,
         highlightEnabled: props.settings?.markdown_highlight_enabled !== false,
         mathEnabled: props.settings?.markdown_math_enabled !== false,
         htmlBlockLiveEnabled: props.settings?.markdown_html_live_enabled !== false,
+        suppressSelectionReveal: shouldSuppressRenderedTextReveal,
+        selectionRevealOverride: currentRenderedTextRevealSelection,
         liveBlockLabels: {
           mathFormula: t("liveMarkdown.mathFormula"),
           emptyMathBlock: t("liveMarkdown.emptyMathBlock"),
@@ -2289,11 +2591,14 @@ function createState(markdownSource: string) {
       editorTheme(),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
+        const composing = isComposing || update.view.composing;
         if (update.docChanged) {
-          scheduleModelUpdate();
-          scheduleResolveEditorAssetImages();
+          if (!composing) {
+            scheduleModelUpdate();
+            scheduleResolveEditorAssetImages();
+          }
         }
-        if (update.docChanged || update.selectionSet) {
+        if (!composing && (update.docChanged || update.selectionSet)) {
           publishSelection(update.state);
           updateToolbarState();
         }
@@ -2324,6 +2629,8 @@ function createState(markdownSource: string) {
           return false;
         },
         pointerdown(event) {
+          if (handleRenderedTextPointerDown(event as PointerEvent)) return true;
+          if (suppressRenderedBlankPointerDown(event as PointerEvent)) return true;
           const target = event.target as HTMLElement | null;
           if (target?.closest(VIEWPORT_STABILIZING_WIDGET_SELECTOR)) {
             markViewportStableForSelection();
@@ -2350,6 +2657,14 @@ function createState(markdownSource: string) {
         blur() {
           flushModelUpdate();
           closeMathPreview();
+          return false;
+        },
+        compositionstart() {
+          handleCompositionStart();
+          return false;
+        },
+        compositionend() {
+          handleCompositionEnd();
           return false;
         },
       }),
@@ -2419,8 +2734,8 @@ function createState(markdownSource: string) {
         ...searchKeymap,
         ...historyKeymap,
         ...defaultKeymap.filter((binding) => binding.key !== "Tab" && binding.key !== "Shift-Tab"),
-        { key: "Alt-ArrowLeft", run: indentLess },
-        { key: "Alt-ArrowRight", run: indentMore },
+        { key: "Alt-ArrowLeft", run: () => runSourceEdit((source, selection) => indentSelectedLines(source, selection, "out")) },
+        { key: "Alt-ArrowRight", run: () => runSourceEdit((source, selection) => indentSelectedLines(source, selection, "in")) },
       ])),
       search({
         top: true,
@@ -2623,14 +2938,40 @@ function openEditorSearch() {
   return openSearchPanel(view);
 }
 
+function currentViewState() {
+  const selection = selectionRange();
+  return {
+    scroll_top: view?.scrollDOM.scrollTop || 0,
+    selection_start: selection.start,
+    selection_end: selection.end,
+  };
+}
+
+function restoreViewState(state?: { scroll_top?: number; selection_start?: number; selection_end?: number } | null) {
+  if (!view || !state) return;
+  const anchor = Math.min(view.state.doc.length, Math.max(0, Math.trunc(state.selection_start || 0)));
+  const head = Math.min(view.state.doc.length, Math.max(0, Math.trunc(state.selection_end ?? anchor)));
+  view.dispatch({ selection: { anchor, head } });
+  const applyScroll = () => {
+    if (view && typeof state.scroll_top === "number") view.scrollDOM.scrollTop = Math.max(0, state.scroll_top);
+  };
+  void nextTick(() => {
+    requestAnimationFrame(applyScroll);
+    window.setTimeout(applyScroll, 80);
+  });
+}
+
 defineExpose({
   openSearch: openEditorSearch,
   scrollToHeading,
+  currentViewState,
+  restoreViewState,
 });
 
 onMounted(() => {
   mountEditor();
   editorRoot.value?.addEventListener("pointerdown", handleEditorRootPointerDown, true);
+  editorRoot.value?.addEventListener("mousedown", handleEditorRootMouseDown, true);
   window.addEventListener("pointerdown", handleGlobalPointerDown, true);
   window.addEventListener("mousedown", handleGlobalPointerDown, true);
   window.addEventListener("keydown", handleGlobalKeydown, true);
@@ -2638,7 +2979,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopTableDragTracking();
+  clearRenderedTextRevealTimer();
+  clearRenderedTextHideTimer();
+  renderedTextHideSelection = null;
   editorRoot.value?.removeEventListener("pointerdown", handleEditorRootPointerDown, true);
+  editorRoot.value?.removeEventListener("mousedown", handleEditorRootMouseDown, true);
   window.removeEventListener("pointerdown", handleGlobalPointerDown, true);
   window.removeEventListener("mousedown", handleGlobalPointerDown, true);
   window.removeEventListener("keydown", handleGlobalKeydown, true);
@@ -2652,6 +2997,7 @@ onBeforeUnmount(() => {
 
 watch(() => props.modelValue, (value) => {
   const normalized = (value || "").replace(/\r\n/g, "\n");
+  if (isComposing || view?.composing) return;
   if (syncingFromEditor || normalized === currentMarkdown.value) return;
   currentMarkdown.value = normalized;
   if (!view) return;

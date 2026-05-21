@@ -21,6 +21,25 @@ function selectionTouches(sel: EditorSelection, from: number, to: number): boole
   return false;
 }
 
+function isEscaped(text: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function findClosingDelimiter(text: string, delimiter: "$" | "$$", from: number): number {
+  let index = from;
+  while (index < text.length) {
+    const next = text.indexOf(delimiter, index);
+    if (next < 0) return -1;
+    if (!isEscaped(text, next) && (delimiter === "$$" || text[next + 1] !== "$")) return next;
+    index = next + delimiter.length;
+  }
+  return -1;
+}
+
 function scanLineMath(text: string, lineFrom: number): MathRange[] {
   const ranges: MathRange[] = [];
   let index = 0;
@@ -29,34 +48,32 @@ function scanLineMath(text: string, lineFrom: number): MathRange[] {
       index += 1;
       continue;
     }
-    if (text[index + 1] === "$") {
-      index += 2;
-      continue;
-    }
-    const previous = index > 0 ? text[index - 1] : "";
-    if (previous === "\\") {
+    if (isEscaped(text, index)) {
       index += 1;
       continue;
     }
-    const end = text.indexOf("$", index + 1);
+    const display = text[index + 1] === "$";
+    const delimiter = display ? "$$" : "$";
+    const contentStart = index + delimiter.length;
+    const end = findClosingDelimiter(text, delimiter, contentStart);
     if (end < 0) break;
-    if (end === index + 1) {
-      index = end + 1;
+    if (end === contentStart) {
+      index = end + delimiter.length;
       continue;
     }
     ranges.push({
       from: lineFrom + index,
-      to: lineFrom + end + 1,
-      contentFrom: lineFrom + index + 1,
+      to: lineFrom + end + delimiter.length,
+      contentFrom: lineFrom + contentStart,
       contentTo: lineFrom + end,
-      display: false,
+      display,
     });
-    index = end + 1;
+    index = end + delimiter.length;
   }
   return ranges;
 }
 
-function scanBlockMath(doc: Text, fromLine: number, toLine: number): MathRange[] {
+function scanBlockMath(doc: Text, fromLine: number, toLine: number, sel?: EditorSelection): MathRange[] {
   const ranges: MathRange[] = [];
   let open: { from: number; contentFrom: number } | null = null;
   for (let number = fromLine; number <= toLine; number++) {
@@ -65,6 +82,7 @@ function scanBlockMath(doc: Text, fromLine: number, toLine: number): MathRange[]
     if (trimmed !== "$$") continue;
     const markFrom = line.from + line.text.indexOf("$$");
     if (!open) {
+      if (sel && selectionTouches(sel, markFrom, markFrom + 2)) continue;
       open = { from: markFrom, contentFrom: markFrom + 2 };
     } else {
       ranges.push({
@@ -86,7 +104,7 @@ export function decorateBlockMath(
   sel: EditorSelection,
   labels: SilkdownLiveBlockLabels,
 ): void {
-  const mathRanges = scanBlockMath(doc, 1, doc.lines);
+  const mathRanges = scanBlockMath(doc, 1, doc.lines, sel);
   for (const range of mathRanges) {
     if (selectionTouches(sel, range.from, range.to)) {
       const latex = doc.sliceString(range.contentFrom, range.contentTo).trim();
@@ -129,7 +147,7 @@ export function decorateMath(
 ): void {
   const fromLine = doc.lineAt(Math.max(0, from)).number;
   const toLine = doc.lineAt(Math.min(doc.length, to)).number;
-  const blockMathRanges: MathRange[] = scanBlockMath(doc, 1, doc.lines);
+  const blockMathRanges: MathRange[] = scanBlockMath(doc, 1, doc.lines, sel);
   const mathRanges: MathRange[] = [];
 
   for (let number = fromLine; number <= toLine; number++) {

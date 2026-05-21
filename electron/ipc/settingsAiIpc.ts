@@ -90,6 +90,54 @@ function cleanMarkdownDefaultEditorMode(value: unknown): Settings["markdown_defa
   return value === "edit" || value === "preview" ? value : "live";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanAiHistoryVersion(value: unknown) {
+  if (!isRecord(value)) return null;
+  const userContent = typeof value.user_content === "string" ? value.user_content : "";
+  const assistantContent = typeof value.assistant_content === "string" ? value.assistant_content : "";
+  if (!userContent && !assistantContent) return null;
+  const redoMode = value.redo_mode === "longer" || value.redo_mode === "shorter" || value.redo_mode === "try-again"
+    ? value.redo_mode
+    : undefined;
+  return {
+    user_content: userContent,
+    assistant_content: assistantContent,
+    ...(redoMode ? { redo_mode: redoMode } : {}),
+    ...(typeof value.prompt_append === "string" ? { prompt_append: value.prompt_append } : {}),
+    created_at: typeof value.created_at === "string" && value.created_at ? value.created_at : new Date().toISOString(),
+  };
+}
+
+function cleanAiHistory(history: unknown): Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }> {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((message): message is Record<string, unknown> => (
+      isRecord(message)
+        && (message.role === "user" || message.role === "assistant")
+        && typeof message.content === "string"
+    ))
+    .map((message) => {
+      const versions = Array.isArray(message.versions)
+        ? message.versions.map(cleanAiHistoryVersion).filter((version): version is NonNullable<ReturnType<typeof cleanAiHistoryVersion>> => Boolean(version))
+        : [];
+      const currentVersion = Number(message.current_version);
+      return {
+        role: message.role as "user" | "assistant",
+        content: message.content as string,
+        ...(typeof message.turn_id === "string" && message.turn_id ? { turn_id: message.turn_id } : {}),
+        ...(versions.length ? {
+          current_version: Number.isFinite(currentVersion)
+            ? Math.min(versions.length - 1, Math.max(0, Math.trunc(currentVersion)))
+            : versions.length - 1,
+          versions,
+        } : {}),
+      };
+    });
+}
+
 const SIMPLETEX_TEST_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADQAAAAUCAYAAADm4pTFAAAAAXNSR0IArs4c6QAAAWJJREFUSEvtlrFOwzAQRd8S3ICBgQ2BiYEBAwMjAwMDAw8BYmBiYOALEGJkYWBgYEJgYmBgQkJC4ijJteOkcbBSlSqV7LXl/PWd7R85nE6nP4QkwPckQGvQf6bJskx3f9hxnKIo6vr6euD7/ibLMszMzABEUWRZ9u9isYjBYKBer3M6nRRFkWmaDMOQJElUVfXW+WVZ1mg0+Pr6Mp1O8/v7O5/PM5lM4vf7hUIhk8mEw+GAw+GAy+WCy+XC6XRKp9PB4XBoNBqFQiGZTJZlWY7H43w+H4qi4PX1lUqlgslkYr/fp9Pp0Gg0MJvNqKqKTqeDw+GA0+mE0WjEbrfL5XJBoVDAZrOJx+PB6/Wi0Wjg8/mw2+1IkmQymXw+H4qiYDabMRgM6HQ6lEolhUIBvV6P3W6H3+/H4/Hg9XqRZRm73Y7BYIDNZkOSJJVKBTqdDjqdDrvdDqPRiM1mQ6/Xo9FoYDAY0Gg0KJVK9Ho9Go0GvV6PXq9HkiQpFAp0Oh0KhQKNRoNRqURRFPz8/Lher4fD4bDZbLBarWg0GgSDQZIkCYfDgU6nQ6fToVQq0Wg0qNVq1Go1Go0Gq9WKRqPBZDKh0WhQqVSo1+uUy2VkWYaqqrIsy7Isr9fr9Qb+AEfqVfnXjS20AAAAAElFTkSuQmCC";
 
@@ -141,6 +189,18 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
       ai_send_annotations_context: patch.ai_send_annotations_context !== false,
       ai_send_loaded_pdf_text: patch.ai_send_loaded_pdf_text !== false,
       ai_send_figure_attachments: patch.ai_send_figure_attachments !== false,
+      ai_redo_longer_prompt: cleanQuoteTemplate(
+        patch.ai_redo_longer_prompt ?? current.ai_redo_longer_prompt,
+        "Make the answer more detailed and comprehensive while preserving accurate reader evidence links.",
+      ),
+      ai_redo_shorter_prompt: cleanQuoteTemplate(
+        patch.ai_redo_shorter_prompt ?? current.ai_redo_shorter_prompt,
+        "Make the answer more concise while preserving the key points and accurate reader evidence links.",
+      ),
+      ai_redo_try_again_prompt: cleanQuoteTemplate(
+        patch.ai_redo_try_again_prompt ?? current.ai_redo_try_again_prompt,
+        "Try again with clearer reasoning, better structure, and accurate reader evidence links.",
+      ),
       simpletex_ocr_token: cleanSimpleTexToken(patch.simpletex_ocr_token ?? current.simpletex_ocr_token),
       simpletex_ocr_enabled: patch.simpletex_ocr_enabled === undefined ? current.simpletex_ocr_enabled : patch.simpletex_ocr_enabled === true,
     };
@@ -194,11 +254,9 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
     return { ok: true, content: response.latex.slice(0, 500) };
   });
 
-  ipcMain.handle("ai:history:save", (_event, documentId: string, history: Array<{ role: "user" | "assistant"; content: string }> = []) => {
+  ipcMain.handle("ai:history:save", (_event, documentId: string, history: unknown[] = []) => {
     ctx.getDocument(documentId);
-    ctx.store.ai_history[documentId] = history
-      .filter((message) => (message.role === "user" || message.role === "assistant") && typeof message.content === "string")
-      .map((message) => ({ role: message.role, content: message.content }));
+    ctx.store.ai_history[documentId] = cleanAiHistory(history);
     ctx.saveStore();
     return ctx.store.ai_history[documentId];
   });

@@ -82,6 +82,34 @@ describe("store migration", () => {
     expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "bad" } }).settings.markdown_default_editor_mode).toBe("live");
   });
 
+  it("migrates and cleans document view states", () => {
+    const migrated = migrateStoreToV3({
+      documents: [{ document_id: "doc-1", title: "Paper" }],
+      view_states: {
+        "doc-1": {
+          pdf: { page_index: 4, scroll_top: 1200, scroll_left: 8, zoom: 1.5 },
+          reader_panel: { active_tab: "notes", collapsed: false, width: 420, notes_mode: "live", summary_mode: "bad", notes_scroll_top: 88 },
+          markdown: { mode: "preview", scroll_top: 300, selection_start: 5, selection_end: 9 },
+          readerm: { mode: "edit-preview", source_view: "summary", source_document_id: "source-doc", active_reference_id: "ref-1", pdf_collapsed: true, pdf_pane_width: 520 },
+        },
+        missing: {
+          pdf: { page_index: 1 },
+        },
+      },
+      settings: {},
+    });
+
+    expect(migrated.view_states?.["missing"]).toBeUndefined();
+    expect(migrated.view_states?.["doc-1"]).toMatchObject({
+      version: 1,
+      pdf: { page_index: 4, scroll_top: 1200, scroll_left: 8, zoom: 1.5 },
+      reader_panel: { active_tab: "notes", collapsed: false, width: 420, notes_mode: "live", notes_scroll_top: 88 },
+      markdown: { mode: "preview", scroll_top: 300, selection_start: 5, selection_end: 9 },
+      readerm: { mode: "edit-preview", source_view: "summary", source_document_id: "source-doc", active_reference_id: "ref-1", pdf_collapsed: true, pdf_pane_width: 520 },
+    });
+    expect(migrated.view_states?.["doc-1"]?.reader_panel?.summary_mode).toBeUndefined();
+  });
+
   it("is idempotent for v3 stores", () => {
     const first = migrateStoreToV3({
       schema_version: 3,

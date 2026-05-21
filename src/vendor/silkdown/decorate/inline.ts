@@ -2,7 +2,7 @@ import { Decoration } from "@codemirror/view";
 import type { EditorSelection, Range, Text } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 import type { InlineNodeName } from "../types.js";
-import { selectionTouchesLineRange } from "../util/selection.js";
+import { selectionTouchesRange } from "../util/selection.js";
 import { children } from "../util/tree.js";
 import { pushRevealableMark } from "./shared.js";
 
@@ -38,7 +38,7 @@ export function decorateInline(
 
   ranges.push(styling.range(node.from, node.to));
 
-  const revealed = selectionTouchesLineRange(doc, sel, node.from, node.to);
+  const revealed = selectionTouchesRange(sel, node.from, node.to);
   if (!revealed) {
     atomicRanges.push(styling.range(node.from, node.to));
   }

@@ -17,6 +17,13 @@ export type ScrollToPageOptions = {
   behavior?: ScrollBehavior;
 };
 
+export type PdfPageViewState = {
+  page_index?: number;
+  scroll_top?: number;
+  scroll_left?: number;
+  zoom?: number;
+};
+
 export function usePdfPages(pageNumbers: Ref<number[]>) {
   const pdfScroll = ref<HTMLElement | null>(null);
   const currentPageIndex = ref(0);
@@ -285,6 +292,42 @@ export function usePdfPages(pageNumbers: Ref<number[]>) {
     zoomAt(1, stage ? viewportCenter(stage) : null);
   }
 
+  function getViewState(): PdfPageViewState {
+    const stage = pdfScroll.value;
+    return {
+      page_index: currentPageIndex.value,
+      scroll_top: stage?.scrollTop || 0,
+      scroll_left: stage?.scrollLeft || 0,
+      zoom: pdfZoom.value,
+    };
+  }
+
+  function restoreViewState(state?: PdfPageViewState | null) {
+    if (!state) {
+      scrollToPage(0, { behavior: "auto" });
+      return;
+    }
+    const targetZoom = typeof state.zoom === "number" && Number.isFinite(state.zoom)
+      ? Math.min(4, Math.max(0.55, state.zoom))
+      : pdfZoom.value;
+    pdfZoom.value = targetZoom;
+    const pageIndex = Number.isFinite(state.page_index) ? Math.max(0, Math.trunc(state.page_index || 0)) : 0;
+    scrollToPage(pageIndex, { behavior: "auto" });
+    const applyScroll = () => {
+      const stage = pdfScroll.value;
+      if (!stage) return;
+      if (typeof state.scroll_left === "number") stage.scrollLeft = Math.max(0, state.scroll_left);
+      if (typeof state.scroll_top === "number") stage.scrollTop = Math.max(0, state.scroll_top);
+    };
+    void nextTick(() => {
+      requestAnimationFrame(() => {
+        applyScroll();
+        requestAnimationFrame(applyScroll);
+      });
+      window.setTimeout(applyScroll, 120);
+    });
+  }
+
   function clearPages() {
     pageElements.clear();
     pageVisibilityRatios.clear();
@@ -311,6 +354,8 @@ export function usePdfPages(pageNumbers: Ref<number[]>) {
     handleWheel,
     zoom,
     resetZoom,
+    getViewState,
+    restoreViewState,
     clearPages,
   };
 }

@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld("paperReaderPlus", {
   clearDocumentHistory: (mode: "readerp" | "readerm") => ipcRenderer.invoke("library:clear-history", mode),
   searchLibrary: (query: string) => ipcRenderer.invoke("library:search", query),
   getDocumentContext: (documentId: string) => ipcRenderer.invoke("documents:get-context", documentId),
+  updateDocumentViewState: (documentId: string, viewState: unknown) => ipcRenderer.invoke("documents:update-view-state", documentId, viewState),
   getDocumentHealth: (documentId: string) => ipcRenderer.invoke("documents:get-health", documentId),
   getPdfData: (documentId: string) => ipcRenderer.invoke("documents:get-pdf-data", documentId),
   updateDocumentTitle: (documentId: string, title: string) => ipcRenderer.invoke("documents:update-title", documentId, title),

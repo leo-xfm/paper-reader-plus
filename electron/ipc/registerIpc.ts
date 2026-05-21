@@ -11,8 +11,11 @@ import { createIpcContext, initStorage } from "./storeContext.js";
 
 export { createIpcContext, flushStore, getSettings, initStorage } from "./storeContext.js";
 
+let ipcRegistered = false;
+
 export function registerIpc(window: BrowserWindow) {
   const ctx = createIpcContext(window);
+  if (ipcRegistered) return;
   registerLibraryIpc(ctx);
   registerDocumentIpc(ctx);
   registerAssetIpc(ctx);
@@ -21,4 +24,5 @@ export function registerIpc(window: BrowserWindow) {
   registerAnnotationIpc(ctx);
   registerParagraphTranslationIpc(ctx);
   registerSettingsAiIpc(ctx);
+  ipcRegistered = true;
 }

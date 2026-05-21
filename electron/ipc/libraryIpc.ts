@@ -44,6 +44,7 @@ function removeDocumentRecord(ctx: IpcContext, documentId: string) {
   delete ctx.store.ai_history[documentId];
   delete ctx.store.symbols[documentId];
   delete ctx.store.paragraph_translations[documentId];
+  delete ctx.store.view_states[documentId];
   ctx.store.assets = ctx.store.assets.filter((item) => item.document_id !== documentId);
   ctx.store.anchors = ctx.store.anchors.filter((item) => item.document_id !== documentId);
   ctx.store.annotations = ctx.store.annotations.filter((item) => item.document_id !== documentId);

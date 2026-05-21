@@ -21,7 +21,7 @@ export type ReaderPackagePayload = {
   packageMode?: ReaderPackageMode;
   note: string;
   summary: string;
-  aiHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  aiHistory: Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>;
   anchors: unknown[];
   annotations: unknown[];
   symbols?: unknown[];
@@ -284,7 +284,7 @@ export async function readReaderPackageBuffer(buffer: Buffer): Promise<ReaderPac
     : [];
   const note = await zip.file(manifest.files.notes)?.async("string") || "";
   const summary = await zip.file(manifest.files.summary)?.async("string") || "";
-  const aiHistory = parseJson<Array<{ role: "user" | "assistant"; content: string }>>(
+  const aiHistory = parseJson<Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>>(
     await zip.file(manifest.files.ai_history)?.async("string"),
     [],
   );

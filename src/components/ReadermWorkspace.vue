@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight, Columns2, Download, FileText, Save, Search } from "lucide-vue-next";
+import { Check, ChevronLeft, ChevronRight, Columns2, Download, Eye, FileText, Save, Search } from "lucide-vue-next";
 import LiveMarkdownEditor from "@/components/LiveMarkdownEditor.vue";
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
-import { useMarkdownZoom } from "@/composables/useMarkdownZoom";
+import { useDropdownPopover } from "@/composables/useDropdownPopover";
+import { scaledMarkdownLineHeight, useMarkdownZoom } from "@/composables/useMarkdownZoom";
 import { useI18n } from "@/i18n";
 import { markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
-import type { ReadermEditorMode, ReadermReference, Settings } from "@/types";
+import type { LibraryDocument, ReadermEditorMode, ReadermReference, Settings } from "@/types";
 
 const props = defineProps<{
   title: string;
@@ -17,6 +18,7 @@ const props = defineProps<{
   mode: ReadermEditorMode;
   documentId: string;
   references: ReadermReference[];
+  referencedDocuments?: LibraryDocument[];
   activeReferenceId: string;
   settings?: Settings | null;
 }>();
@@ -33,6 +35,7 @@ const emit = defineEmits<{
   (event: "pasteImage", payload: { dataUrl: string; selection?: { start: number; end: number } }): void;
   (event: "resizeImage", payload: { assetPath: string }): void;
   (event: "linkClick", payload: { href: string; event: MouseEvent; force?: boolean }): void;
+  (event: "selectReference", reference: ReadermReference): void;
   (event: "updateSettings", patch: Partial<Settings>): void;
 }>();
 
@@ -46,9 +49,17 @@ const searchOpen = ref(false);
 const searchQuery = ref("");
 const activePreviewMatchIndex = ref(0);
 const { t } = useI18n();
+const {
+  open: referenceMenuOpen,
+  rootRef: referenceMenuRoot,
+  triggerRef: referenceMenuTrigger,
+  menuStyle: referenceMenuStyle,
+  closeMenu: closeReferenceMenu,
+  toggleOpen: toggleReferenceMenu,
+} = useDropdownPopover(".readerm-reference-menu", { offset: 7 });
 const resolvedCount = computed(() => props.references.filter((reference) => reference.status === "resolved").length);
 const previewPosition = computed(() => props.settings?.readerm_preview_position === "bottom" ? "bottom" : "right");
-const markdownLineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const markdownLineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const markdownCodeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
 const markdownCodeLineHeight = computed(() => props.settings?.markdown_code_line_height || 1.22);
 const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
@@ -64,6 +75,8 @@ const editSearchMatchCount = computed(() => {
   if (!query || (props.mode !== "edit" && props.mode !== "edit-preview")) return 0;
   return props.markdown.toLowerCase().split(query.toLowerCase()).length - 1;
 });
+const sortedReferences = computed(() => [...props.references].sort((a, b) => a.markdown_start - b.markdown_start));
+const referencedDocumentTitleById = computed(() => new Map((props.referencedDocuments || []).map((document) => [document.document_id, document.title])));
 
 function currentSelection() {
   return textarea.value ? { start: textarea.value.selectionStart, end: textarea.value.selectionEnd } : liveSelection.value;
@@ -95,8 +108,45 @@ function scrollToHeading(headingId: string) {
     ?.scrollIntoView({ block: "start", behavior: "smooth" }) !== undefined;
 }
 
+function currentViewState() {
+  if (props.mode === "live") return liveEditor.value?.currentViewState() || {};
+  if (props.mode === "preview") return {
+    scroll_top: previewRoot.value?.scrollTop || 0,
+  };
+  const editor = textarea.value;
+  return {
+    scroll_top: editor?.scrollTop || 0,
+    selection_start: editor?.selectionStart ?? liveSelection.value?.start ?? 0,
+    selection_end: editor?.selectionEnd ?? liveSelection.value?.end ?? 0,
+    preview_scroll_top: props.mode === "edit-preview" ? previewRoot.value?.scrollTop || 0 : undefined,
+  };
+}
+
+async function restoreViewState(state?: { scroll_top?: number; selection_start?: number; selection_end?: number; preview_scroll_top?: number } | null) {
+  if (!state) return;
+  await nextTick();
+  if (props.mode === "live") {
+    liveEditor.value?.restoreViewState(state);
+    return;
+  }
+  if (props.mode === "preview") {
+    if (previewRoot.value) previewRoot.value.scrollTop = state.scroll_top || 0;
+    return;
+  }
+  const editor = textarea.value;
+  if (editor) {
+    editor.scrollTop = state.scroll_top || 0;
+    const start = Math.max(0, Math.min(state.selection_start ?? 0, editor.value.length));
+    const end = Math.max(0, Math.min(state.selection_end ?? start, editor.value.length));
+    editor.setSelectionRange(start, end);
+  }
+  if (previewRoot.value) previewRoot.value.scrollTop = state.preview_scroll_top || 0;
+}
+
 defineExpose({
   currentSelection,
+  currentViewState,
+  restoreViewState,
   scrollToHeading,
 });
 
@@ -197,6 +247,24 @@ function toggleEditPreview() {
   emit("update:mode", props.mode === "edit-preview" ? "edit" : "edit-preview");
 }
 
+function referenceStatusLabel(reference: ReadermReference) {
+  if (reference.status === "resolved") return reference.page_label ? `${t("common.page")} ${reference.page_label}` : reference.page_index !== undefined ? `${t("common.page")} ${reference.page_index + 1}` : t("common.loaded");
+  return reference.status === "missing-anchor" ? t("readerm.missingAnchor") : t("readerm.missingDocument");
+}
+
+function referenceTitle(reference: ReadermReference) {
+  return referencedDocumentTitleById.value.get(reference.document_id) || reference.document_id || reference.href;
+}
+
+function referenceSubtitle(reference: ReadermReference) {
+  return reference.label || referenceStatusLabel(reference);
+}
+
+function selectReference(reference: ReadermReference) {
+  emit("selectReference", reference);
+  closeReferenceMenu();
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
     if (props.mode === "live") return;
@@ -243,7 +311,46 @@ watch([searchQuery, () => props.mode, () => props.markdown], () => {
             />
             <button v-else type="button" class="title-button" :title="t('pdf.rename')" @click="emit('editTitle')">{{ title }}</button>
           </div>
-          <span>{{ t("readerm.referencesResolved", { resolved: resolvedCount, total: references.length }) }}</span>
+          <div ref="referenceMenuRoot" class="readerm-reference-summary">
+            <span>{{ t("readerm.referencesResolved", { resolved: resolvedCount, total: references.length }) }}</span>
+            <button
+              ref="referenceMenuTrigger"
+              type="button"
+              class="readerm-reference-eye"
+              :title="t('readerm.viewReferences')"
+              :aria-label="t('readerm.viewReferences')"
+              :aria-expanded="referenceMenuOpen"
+              @click="toggleReferenceMenu"
+            >
+              <Eye :size="14" />
+            </button>
+            <Teleport to="body">
+              <div
+                v-if="referenceMenuOpen"
+                class="readerm-reference-menu"
+                :style="referenceMenuStyle"
+                role="listbox"
+                :aria-label="t('readerm.references')"
+                @wheel.stop
+              >
+                <button
+                  v-for="reference in sortedReferences"
+                  :key="reference.reference_id"
+                  type="button"
+                  class="readerm-reference-option"
+                  :class="{ active: reference.reference_id === activeReferenceId, missing: reference.status !== 'resolved' }"
+                  role="option"
+                  :aria-selected="reference.reference_id === activeReferenceId"
+                  @click="selectReference(reference)"
+                >
+                  <Check :size="15" />
+                  <span>{{ referenceTitle(reference) }}</span>
+                  <small>{{ referenceSubtitle(reference) }}</small>
+                </button>
+                <div v-if="!sortedReferences.length" class="readerm-reference-empty">{{ t("readerm.noReferences") }}</div>
+              </div>
+            </Teleport>
+          </div>
         </div>
       </div>
       <div class="readerm-actions">

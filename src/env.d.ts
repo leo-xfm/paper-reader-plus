@@ -9,6 +9,7 @@ import type {
   AnnotationUpdateRequest,
   CleanupUnusedResult,
   DocumentContext,
+  DocumentViewState,
   DictionaryEntry,
   LibraryDocument,
   LibrarySearchResult,
@@ -93,6 +94,7 @@ declare global {
       clearDocumentHistory(mode: "readerp" | "readerm"): Promise<{ removed: number }>;
       searchLibrary(query: string): Promise<LibrarySearchResult[]>;
       getDocumentContext(documentId: string): Promise<DocumentContext>;
+      updateDocumentViewState(documentId: string, viewState: DocumentViewState): Promise<DocumentViewState>;
       getDocumentHealth(documentId: string): Promise<PackageHealthReport>;
       getPdfData(documentId: string): Promise<ArrayBuffer>;
       updateDocumentTitle(documentId: string, title: string): Promise<LibraryDocument>;

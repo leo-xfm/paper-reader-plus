@@ -9,6 +9,8 @@ import { normalizeMarkdownAssetPath } from "../services/AssetService.js";
 import type { StoredAnchor, StoredAnnotation } from "../storeMigration.js";
 import type { DbDocument, IpcContext } from "./storeContext.js";
 
+type IpcAiHistory = Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>;
+
 async function fileSize(filePath: string) {
   return (await stat(filePath)).size;
 }
@@ -33,7 +35,7 @@ async function confirmExportAnchors(ctx: IpcContext) {
 }
 
 export function registerReaderPackageIpc(ctx: IpcContext) {
-  ipcMain.handle("readerp:export-current", async (_event, documentId: string, aiHistory: Array<{ role: "user" | "assistant"; content: string }> = []) => {
+  ipcMain.handle("readerp:export-current", async (_event, documentId: string, aiHistory: IpcAiHistory = []) => {
     const document = ctx.getDocument(documentId);
     const keepAnchors = await confirmExportAnchors(ctx);
     if (keepAnchors === null) return null;
@@ -77,7 +79,7 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     documentId: string,
     note: string,
     summary: string,
-    aiHistory: Array<{ role: "user" | "assistant"; content: string }> = [],
+    aiHistory: IpcAiHistory = [],
   ) => {
     const document = ctx.getDocument(documentId);
     let targetPath = document.readerp_path;
@@ -123,7 +125,7 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     return targetPath;
   });
 
-  ipcMain.handle("readerp:export-markdown-centered", async (_event, documentId: string, aiHistory: Array<{ role: "user" | "assistant"; content: string }> = []) => {
+  ipcMain.handle("readerp:export-markdown-centered", async (_event, documentId: string, aiHistory: IpcAiHistory = []) => {
     const document = ctx.getDocument(documentId);
     const keepAnchors = await confirmExportAnchors(ctx);
     if (keepAnchors === null) return null;
@@ -167,7 +169,7 @@ export function registerReaderPackageIpc(ctx: IpcContext) {
     return result;
   });
 
-  ipcMain.handle("readerp:split-current", async (_event, documentId: string, aiHistory: Array<{ role: "user" | "assistant"; content: string }> = []) => {
+  ipcMain.handle("readerp:split-current", async (_event, documentId: string, aiHistory: IpcAiHistory = []) => {
     const document = ctx.getDocument(documentId);
     const result = await dialog.showOpenDialog(ctx.window, {
       title: "Split Reader Package",

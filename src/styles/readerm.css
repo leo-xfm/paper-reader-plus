@@ -19,6 +19,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   min-height: 58px;
   padding: 10px 14px;
@@ -70,9 +71,112 @@
   font-size: var(--font-size-small);
 }
 
+.readerm-reference-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.readerm-reference-summary > span {
+  min-width: 0;
+}
+
+.readerm-reference-eye {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-soft);
+}
+
+.readerm-reference-eye:hover,
+.readerm-reference-eye[aria-expanded="true"] {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-primary);
+}
+
+.readerm-reference-menu {
+  position: fixed;
+  z-index: var(--z-floating-preview);
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(360px, calc(100vh - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-popover);
+}
+
+.readerm-reference-option {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+}
+
+.readerm-reference-option:hover,
+.readerm-reference-option.active {
+  background: var(--color-surface);
+}
+
+.readerm-reference-option.missing {
+  color: #8a4b18;
+}
+
+.readerm-reference-option svg {
+  grid-row: 1 / span 2;
+  color: var(--color-primary);
+  opacity: 0;
+}
+
+.readerm-reference-option.active svg {
+  opacity: 1;
+}
+
+.readerm-reference-option span,
+.readerm-reference-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readerm-reference-option span {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.readerm-reference-option small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+}
+
+.readerm-reference-empty {
+  padding: 12px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+}
+
 .readerm-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 

@@ -26,6 +26,12 @@ const emit = defineEmits<{
   (event: "registerFileAssociations"): void;
   (event: "updateFileAssociation", extension: FileAssociationExtension, associated: boolean): void;
 }>();
+
+function fileAssociationStateLabel(item: FileAssociationStatus["associations"][number]) {
+  if (item.associated) return t("settings.fileAssociationBound");
+  if (item.registered) return t("settings.fileAssociationRegisteredOnly");
+  return t("settings.fileAssociationUnbound");
+}
 </script>
 
 <template>
@@ -256,6 +262,18 @@ const emit = defineEmits<{
           <input v-model="settings.ai_send_figure_attachments" type="checkbox" />
           <span>{{ t("settings.aiSendFigureAttachments") }}</span>
         </label>
+        <label class="settings-grid-wide">
+          {{ t("settings.aiRedoLongerPrompt") }}
+          <textarea v-model="settings.ai_redo_longer_prompt" rows="3" spellcheck="false" />
+        </label>
+        <label class="settings-grid-wide">
+          {{ t("settings.aiRedoShorterPrompt") }}
+          <textarea v-model="settings.ai_redo_shorter_prompt" rows="3" spellcheck="false" />
+        </label>
+        <label class="settings-grid-wide">
+          {{ t("settings.aiRedoTryAgainPrompt") }}
+          <textarea v-model="settings.ai_redo_try_again_prompt" rows="3" spellcheck="false" />
+        </label>
       </div>
       <div class="modal-actions">
         <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
@@ -275,6 +293,13 @@ const emit = defineEmits<{
           <input value="SimpleTex OCR" readonly />
         </label>
         <label class="settings-grid-wide">{{ t("settings.simpletexOcrToken") }}<input v-model="settings.simpletex_ocr_token" type="password" /></label>
+      </div>
+      <div class="settings-context-options">
+        <label class="settings-checkbox">
+          <input v-model="settings.simpletex_ocr_enabled" type="checkbox" />
+          <span>{{ t("settings.simpletexOcrEnabled") }}</span>
+        </label>
+        <small>{{ t("settings.simpletexOcrEnabledDescription") }}</small>
       </div>
       <div class="modal-actions">
         <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
@@ -339,7 +364,7 @@ const emit = defineEmits<{
         <article v-for="item in fileAssociationStatus?.associations || []" :key="item.extension">
           <div>
             <strong>{{ item.extension }}</strong>
-            <span>{{ item.associated ? t("settings.fileAssociationBound") : t("settings.fileAssociationUnbound") }}</span>
+            <span>{{ fileAssociationStateLabel(item) }}</span>
           </div>
           <button
             type="button"

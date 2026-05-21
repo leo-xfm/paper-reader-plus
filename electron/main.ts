@@ -25,11 +25,11 @@ function isAllowedExternalUrl(value: string) {
 
 function createWindow() {
   closeConfirmed = false;
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1480,
     height: 980,
-    minWidth: 1320,
-    minHeight: 760,
+    minWidth: 1100,
+    minHeight: 700,
     title: "Paper Reader Plus",
     icon: appIconPath,
     backgroundColor: "#f6f7f9",
@@ -41,28 +41,33 @@ function createWindow() {
       sandbox: false,
     },
   });
-  mainWindow.setAutoHideMenuBar(false);
-  mainWindow.setMenuBarVisibility(true);
+  mainWindow = window;
+  window.setAutoHideMenuBar(false);
+  window.setMenuBarVisibility(true);
 
   if (isDev) {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL!);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+    void window.loadURL(process.env.VITE_DEV_SERVER_URL!);
+    window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void mainWindow.loadFile(join(app.getAppPath(), "dist/index.html"));
+    void window.loadFile(join(app.getAppPath(), "dist/index.html"));
   }
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  window.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
 
-  mainWindow.on("close", (event) => {
+  window.on("close", (event) => {
     if (closeConfirmed) return;
     event.preventDefault();
-    mainWindow?.webContents.send("app:close-request");
+    if (!window.isDestroyed()) window.webContents.send("app:close-request");
   });
 
-  registerIpc(mainWindow);
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+  });
+
+  registerIpc(window);
 }
 
 ipcMain.handle("app:open-external-url", async (_event, url: string) => {
@@ -71,7 +76,8 @@ ipcMain.handle("app:open-external-url", async (_event, url: string) => {
 });
 
 function sendMenuAction(action: MenuAction) {
-  mainWindow?.webContents.send("menu:action", action);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("menu:action", action);
 }
 
 async function importAssociatedFile(filePath: string) {

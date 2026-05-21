@@ -197,7 +197,7 @@ function renderCellMarkdown(cell: HTMLTableCellElement, source: string): void {
 function renderInlineMarkdown(source: string): Node[] {
   const fragment = document.createDocumentFragment();
   let index = 0;
-  const tokenPattern = /(<u>.+?<\/u>|`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|~~[^~\n]+?~~|\$[^$\n]+?\$|\[[^\]\n]+\]\([^) \n]+(?:\s+[^)\n]*)?\)|(?:^|\n)\s*[-+*]\s+\[[ xX]\]\s+|(?:^|\n)\s*[-+*]\s+)/gi;
+  const tokenPattern = /(<u>.+?<\/u>|`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|~~[^~\n]+?~~|\$\$[^$\n]+?\$\$|\$[^$\n]+?\$|\[[^\]\n]+\]\([^) \n]+(?:\s+[^)\n]*)?\)|(?:^|\n)\s*[-+*]\s+\[[ xX]\]\s+|(?:^|\n)\s*[-+*]\s+)/gi;
   for (const match of source.matchAll(tokenPattern)) {
     const start = match.index || 0;
     if (start > index) appendText(fragment, source.slice(index, start));
@@ -241,18 +241,20 @@ function appendRenderedToken(fragment: DocumentFragment, token: string): void {
     fragment.appendChild(element);
     return;
   }
-  if (/^\$[^$\n]+?\$$/.test(token)) {
+  if (/^\$\$[^$\n]+?\$\$$/.test(token) || /^\$[^$\n]+?\$$/.test(token)) {
+    const displayMode = token.startsWith("$$");
+    const delimiterLength = displayMode ? 2 : 1;
     const element = document.createElement("span");
-    element.className = "sd-math sd-math-inline";
+    element.className = displayMode ? "sd-math sd-math-block" : "sd-math sd-math-inline";
     try {
-      katex.render(token.slice(1, -1), element, {
-        displayMode: false,
+      katex.render(token.slice(delimiterLength, -delimiterLength), element, {
+        displayMode,
         throwOnError: false,
         strict: false,
         trust: false,
       });
     } catch {
-      element.textContent = token.slice(1, -1);
+      element.textContent = token.slice(delimiterLength, -delimiterLength);
     }
     fragment.appendChild(element);
     return;

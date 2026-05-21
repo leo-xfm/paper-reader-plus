@@ -37,6 +37,9 @@ export type Settings = {
   ai_send_annotations_context: boolean;
   ai_send_loaded_pdf_text: boolean;
   ai_send_figure_attachments: boolean;
+  ai_redo_longer_prompt: string;
+  ai_redo_shorter_prompt: string;
+  ai_redo_try_again_prompt: string;
   simpletex_ocr_token: string;
   simpletex_ocr_enabled: boolean;
   translator_mode: "ai" | "api";

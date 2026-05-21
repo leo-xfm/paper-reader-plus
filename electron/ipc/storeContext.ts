@@ -2,11 +2,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { BrowserWindow } from "electron";
-import { app, dialog } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import { createReaderPackageBuffer, extractAssetPathsFromMarkdown, type ReaderPackageAssetInput } from "../ReaderPackageService.js";
 import { resolveReadermReferences } from "../services/ReadermPackageService.js";
-import { migrateStoreToV3, STORE_SCHEMA_VERSION, type StoredAnchor, type StoredAnnotation, type StoredParagraphTranslation } from "../storeMigration.js";
+import { migrateStoreToV3, STORE_SCHEMA_VERSION, type StoredAnchor, type StoredAnnotation, type StoredDocumentViewState, type StoredParagraphTranslation } from "../storeMigration.js";
 import { findDocsService, readDocsKeyConfig, readTemplate } from "../services/DocsConfigService.js";
 import type { Settings } from "../services/SettingsTypes.js";
 
@@ -71,11 +70,12 @@ export type StoredData = {
   summaries: Record<string, { content: string; updated_at: string }>;
   anchors: StoredAnchor[];
   annotations: StoredAnnotation[];
-  ai_history: Record<string, Array<{ role: "user" | "assistant"; content: string }>>;
+  ai_history: Record<string, Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>>;
   symbols: Record<string, StoredSymbolDefinition[]>;
   assets: StoredAsset[];
   dictionary: DictionaryEntry[];
   paragraph_translations: Record<string, StoredParagraphTranslation[]>;
+  view_states: Record<string, StoredDocumentViewState>;
   settings: Partial<Settings>;
 };
 
@@ -86,7 +86,7 @@ type ReaderPackageSaveOptions = {
   defaultPath: string;
   note: string;
   summary: string;
-  aiHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  aiHistory: Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>;
   anchors: unknown[];
   annotations: unknown[];
   symbols?: unknown[];
@@ -106,6 +106,19 @@ const aiStreamControllers = new Map<string, AbortController>();
 let storeWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let storeWritePromise = Promise.resolve();
 const STORE_WRITE_DEBOUNCE_MS = 80;
+
+function currentWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  if (focusedWindow && !focusedWindow.isDestroyed()) {
+    mainWindow = focusedWindow;
+    return focusedWindow;
+  }
+  const availableWindow = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed()) || null;
+  mainWindow = availableWindow;
+  if (!availableWindow) throw new Error("Main window is not available.");
+  return availableWindow;
+}
 
 function defaultSettings(): Settings {
   const docsConfig = readDocsKeyConfig();
@@ -152,6 +165,9 @@ function defaultSettings(): Settings {
     ai_send_annotations_context: true,
     ai_send_loaded_pdf_text: true,
     ai_send_figure_attachments: true,
+    ai_redo_longer_prompt: "Make the answer more detailed and comprehensive while preserving accurate reader evidence links.",
+    ai_redo_shorter_prompt: "Make the answer more concise while preserving the key points and accurate reader evidence links.",
+    ai_redo_try_again_prompt: "Try again with clearer reasoning, better structure, and accurate reader evidence links.",
     simpletex_ocr_token: "",
     simpletex_ocr_enabled: false,
     translator_mode: "ai",
@@ -181,6 +197,7 @@ function emptyStore(): StoredData {
     assets: [],
     dictionary: [],
     paragraph_translations: {},
+    view_states: {},
     settings: {},
   };
 }
@@ -249,6 +266,7 @@ export function initStorage() {
   store.assets ||= [];
   store.dictionary ||= [];
   store.paragraph_translations ||= {};
+  store.view_states ||= {};
   saveStore();
 }
 
@@ -349,6 +367,75 @@ export function getSettings() {
   return { ...defaultSettings(), ...store.settings };
 }
 
+function cleanFiniteNumber(value: unknown, min: number, max: number) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return undefined;
+  return Math.min(max, Math.max(min, number));
+}
+
+function cleanBoolean(value: unknown) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function cleanMode(value: unknown, allowed: string[]) {
+  return typeof value === "string" && allowed.includes(value) ? value : undefined;
+}
+
+function compactRecord<T extends Record<string, unknown>>(value: T): Partial<T> | undefined {
+  const entries = Object.entries(value).filter(([, entry]) => entry !== undefined);
+  return entries.length ? Object.fromEntries(entries) as Partial<T> : undefined;
+}
+
+export function cleanDocumentViewState(value: unknown): StoredDocumentViewState {
+  const source = isRecord(value) ? value : {};
+  const pdfSource = isRecord(source.pdf) ? source.pdf : {};
+  const readerPanelSource = isRecord(source.reader_panel) ? source.reader_panel : {};
+  const markdownSource = isRecord(source.markdown) ? source.markdown : {};
+  const readermSource = isRecord(source.readerm) ? source.readerm : {};
+  const pdf = compactRecord({
+    page_index: cleanFiniteNumber(pdfSource.page_index, 0, 100000),
+    scroll_top: cleanFiniteNumber(pdfSource.scroll_top, 0, 100000000),
+    scroll_left: cleanFiniteNumber(pdfSource.scroll_left, 0, 100000000),
+    zoom: cleanFiniteNumber(pdfSource.zoom, 0.1, 10),
+  });
+  const reader_panel = compactRecord({
+    active_tab: cleanMode(readerPanelSource.active_tab, ["annotations", "notes", "summary", "symbols", "ai"]),
+    collapsed: cleanBoolean(readerPanelSource.collapsed),
+    width: cleanFiniteNumber(readerPanelSource.width, 180, 2000),
+    notes_mode: cleanMode(readerPanelSource.notes_mode, ["edit", "live", "preview"]),
+    summary_mode: cleanMode(readerPanelSource.summary_mode, ["edit", "live", "preview"]),
+    notes_scroll_top: cleanFiniteNumber(readerPanelSource.notes_scroll_top, 0, 100000000),
+    summary_scroll_top: cleanFiniteNumber(readerPanelSource.summary_scroll_top, 0, 100000000),
+  });
+  const markdown = compactRecord({
+    mode: cleanMode(markdownSource.mode, ["edit", "live", "preview"]),
+    scroll_top: cleanFiniteNumber(markdownSource.scroll_top, 0, 100000000),
+    selection_start: cleanFiniteNumber(markdownSource.selection_start, 0, 100000000),
+    selection_end: cleanFiniteNumber(markdownSource.selection_end, 0, 100000000),
+  });
+  const readerm = compactRecord({
+    mode: cleanMode(readermSource.mode, ["edit", "live", "preview", "edit-preview"]),
+    scroll_top: cleanFiniteNumber(readermSource.scroll_top, 0, 100000000),
+    selection_start: cleanFiniteNumber(readermSource.selection_start, 0, 100000000),
+    selection_end: cleanFiniteNumber(readermSource.selection_end, 0, 100000000),
+    preview_scroll_top: cleanFiniteNumber(readermSource.preview_scroll_top, 0, 100000000),
+    source_view: cleanMode(readermSource.source_view, ["pdf", "markdown", "summary"]),
+    source_document_id: typeof readermSource.source_document_id === "string" ? readermSource.source_document_id : undefined,
+    source_anchor_id: typeof readermSource.source_anchor_id === "string" ? readermSource.source_anchor_id : undefined,
+    active_reference_id: typeof readermSource.active_reference_id === "string" ? readermSource.active_reference_id : undefined,
+    pdf_collapsed: cleanBoolean(readermSource.pdf_collapsed),
+    pdf_pane_width: cleanFiniteNumber(readermSource.pdf_pane_width, 180, 2000),
+  });
+  return {
+    version: 1,
+    updated_at: now(),
+    ...(pdf ? { pdf } : {}),
+    ...(reader_panel ? { reader_panel } : {}),
+    ...(markdown ? { markdown } : {}),
+    ...(readerm ? { readerm } : {}),
+  };
+}
+
 export function clampSummaryFigureAttachmentLimit(value: unknown) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 10;
@@ -395,7 +482,7 @@ export function normalizeDictionaryTerm(value: string) {
 }
 
 export async function saveReaderPackageForDocument(options: ReaderPackageSaveOptions) {
-  const result = await dialog.showSaveDialog(mainWindow!, {
+  const result = await dialog.showSaveDialog(currentWindow(), {
     title: "Save Reader Package",
     defaultPath: options.defaultPath,
     filters: [{ name: "Reader Package", extensions: ["readerp"] }],
@@ -426,7 +513,9 @@ export async function saveReaderPackageForDocument(options: ReaderPackageSaveOpt
 export function createIpcContext(window: BrowserWindow) {
   mainWindow = window;
   return {
-    window,
+    get window() {
+      return currentWindow();
+    },
     aiStreamControllers,
     get store() {
       return store;
@@ -460,6 +549,7 @@ export function createIpcContext(window: BrowserWindow) {
     buildSortIndex,
     latexTargetPath,
     normalizeDictionaryTerm,
+    cleanDocumentViewState,
     saveReaderPackageForDocument,
     flushStore,
   };

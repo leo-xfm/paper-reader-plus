@@ -18,6 +18,14 @@
   line-height: var(--markdown-line-height, 1.6);
 }
 
+.markdown-panel-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-size: var(--markdown-editor-font-size, 15px);
+  line-height: var(--markdown-line-height, 1.6);
+}
+
 .markdown-preview {
   padding: 14px;
   font-family: var(--markdown-body-font-family, inherit);
@@ -51,6 +59,22 @@
 
 .markdown-preview p {
   margin: 0.55em 0;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin: 0.55em 0 0.55em 4ch;
+  padding-left: 0;
+}
+
+.markdown-preview li {
+  margin: 0.2em 0;
+}
+
+.markdown-preview li > ul,
+.markdown-preview li > ol {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
 }
 
 .markdown-preview a {
@@ -1911,15 +1935,18 @@ button.live-table-grid-cell,
 }
 
 .live-codemirror-host .sd-list-marker-1 {
+  margin-left: 1ch;
   font-size: 1.12em;
   font-weight: 500;
 }
 
 .live-codemirror-host .sd-list-marker-2 {
+  margin-left: 2ch;
   font-size: 1.06em;
 }
 
 .live-codemirror-host .sd-list-marker-3 {
+  margin-left: 3ch;
   font-size: 1.05em;
   font-weight: 500;
 }

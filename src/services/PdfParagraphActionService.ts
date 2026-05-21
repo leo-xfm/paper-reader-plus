@@ -13,9 +13,9 @@ type TextLine = {
   rects_pct: RectPct[];
 };
 
-type TextBlockKind = "paragraph" | "heading" | "formula" | "figure" | "table";
+export type TextBlockKind = "paragraph" | "heading" | "formula" | "figure" | "table";
 
-type TextBlock = {
+export type PdfTextBlock = {
   block_id: string;
   page_index: number;
   kind: TextBlockKind;
@@ -25,7 +25,7 @@ type TextBlock = {
   rects_pct: RectPct[];
 };
 
-type BuildOptions = {
+export type PdfTextBlockBuildOptions = {
   lineTopTolerance?: number;
   columnGapThreshold?: number;
   minColumnLineCount?: number;
@@ -34,7 +34,7 @@ type BuildOptions = {
   minTextLength?: number;
 };
 
-const DEFAULT_OPTIONS: Required<BuildOptions> = {
+const DEFAULT_OPTIONS: Required<PdfTextBlockBuildOptions> = {
   lineTopTolerance: 0.012,
   columnGapThreshold: 0.14,
   minColumnLineCount: 2,
@@ -97,7 +97,7 @@ function createLine(pageIndex: number, group: PdfTextItem[]): TextLine | null {
   };
 }
 
-function splitLineGroup(group: PdfTextItem[], options: Required<BuildOptions>) {
+function splitLineGroup(group: PdfTextItem[], options: Required<PdfTextBlockBuildOptions>) {
   const ordered = [...group].sort((left, right) => left.rectPct.left - right.rectPct.left);
   const segments: PdfTextItem[][] = [];
   let current: PdfTextItem[] = [];
@@ -125,7 +125,7 @@ function quantile(values: number[], ratio: number) {
   return sorted[index];
 }
 
-function isPotentialFullWidthLine(line: TextLine, options: Required<BuildOptions>) {
+function isPotentialFullWidthLine(line: TextLine, options: Required<PdfTextBlockBuildOptions>) {
   return line.width >= options.fullWidthLineThreshold || (line.left < 0.42 && rightOf(line) > 0.58);
 }
 
@@ -150,7 +150,7 @@ function sortTwoColumnLines(lines: TextLine[]) {
   return sorted;
 }
 
-function assignReadingColumns(lines: TextLine[], options: Required<BuildOptions>) {
+function assignReadingColumns(lines: TextLine[], options: Required<PdfTextBlockBuildOptions>) {
   const columnCandidates = lines.filter((line) => !isPotentialFullWidthLine(line, options));
   const leftCandidates = columnCandidates.filter((line) => lineCenter(line) < 0.5);
   const rightCandidates = columnCandidates.filter((line) => lineCenter(line) >= 0.5);
@@ -177,7 +177,7 @@ function assignReadingColumns(lines: TextLine[], options: Required<BuildOptions>
   return sortTwoColumnLines(assigned);
 }
 
-function buildLines(pageIndex: number, items: PdfTextItem[], options: Required<BuildOptions>): TextLine[] {
+function buildLines(pageIndex: number, items: PdfTextItem[], options: Required<PdfTextBlockBuildOptions>): TextLine[] {
   const sorted = [...items]
     .filter((item) => normalizeText(item.text).length >= options.minTextLength)
     .sort(itemSort);
@@ -198,10 +198,29 @@ function buildLines(pageIndex: number, items: PdfTextItem[], options: Required<B
   return assignReadingColumns(lines, options);
 }
 
-function isParagraphActionContinuation(current: TextLine[], next: TextLine, medianHeight: number, options: Required<BuildOptions>) {
+function formulaSignal(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 6 && /[.!?\u3002\uff01\uff1f]$/.test(trimmed)) return 0;
+  const mathChars = (trimmed.match(/[=+\-*/\u2211\u2212\u00d7\u00f7\u2264\u2265\u221e\u2202\u2207\u221a\u03b1-\u03c9\u0391-\u03a9^_{}\\]/g) || []).length;
+  const hasMathOperator = /[=<>+\-*/^_]|\b(?:arg\s*min|arg\s*max|min|max|sum|prod|log|exp)\b|\\(?:sum|prod|int|frac|sqrt|alpha|beta|gamma|lambda|theta|sigma|mu|partial|nabla)/i.test(trimmed);
+  if (mathChars >= 4 && mathChars / Math.max(1, trimmed.length) > 0.1) return 2;
+  if (words.length <= 14 && mathChars >= 2 && hasMathOperator) return 1;
+  return 0;
+}
+
+function isLikelyFormulaLine(line: TextLine) {
+  return formulaSignal(line.text) > 0 && line.text.split(/\s+/).filter(Boolean).length <= 16;
+}
+
+function isParagraphActionContinuation(current: TextLine[], next: TextLine, medianHeight: number, options: Required<PdfTextBlockBuildOptions>) {
   const previous = current.at(-1);
   if (!previous) return true;
   if (previous.columnIndex !== next.columnIndex) return false;
+  const previousFormula = isLikelyFormulaLine(previous);
+  const nextFormula = isLikelyFormulaLine(next);
+  if (previousFormula !== nextFormula) return false;
   const verticalGap = next.top - (previous.top + previous.height);
   if (verticalGap < 0) return true;
   if (verticalGap > medianHeight * options.paragraphGapMultiplier) return false;
@@ -241,15 +260,14 @@ function detectKind(text: string, lines: TextLine[]): TextBlockKind {
   if (/^table\s+\d+/i.test(trimmed)) return "table";
   if (/^(fig\.?|figure)\s+\d+/i.test(trimmed)) return "figure";
   const words = trimmed.split(/\s+/).filter(Boolean);
-  const mathChars = (trimmed.match(/[=+\-*/\u2211\u2212\u00d7\u00f7\u2264\u2265\u221e\u2202\u221a\u03b1-\u03c9^_{}]/g) || []).length;
-  if (words.length <= 12 && mathChars >= 4 && mathChars / Math.max(1, trimmed.length) > 0.12) return "formula";
+  if (words.length <= 18 && formulaSignal(trimmed) > 0) return "formula";
   const averageFont = lines.reduce((sum, line) => sum + line.fontSize, 0) / Math.max(1, lines.length);
   const titleLike = words.length <= 14 && averageFont >= 12 && !/[.!?\u3002\uff01\uff1f]$/.test(trimmed);
   if (titleLike) return "heading";
   return "paragraph";
 }
 
-function createBlock(pageIndex: number, blockIndex: number, lines: TextLine[]): TextBlock {
+function createBlock(pageIndex: number, blockIndex: number, lines: TextLine[]): PdfTextBlock {
   const rects = lines.map((line) => mergeRects(line.rects_pct));
   const box = mergeRects(rects);
   const text = normalizeText(lines.map((line) => line.text).join(" "));
@@ -264,11 +282,11 @@ function createBlock(pageIndex: number, blockIndex: number, lines: TextLine[]): 
   };
 }
 
-export function buildPdfParagraphActionBlocks(pageIndex: number, items: PdfTextItem[], options: BuildOptions = {}): PdfParagraphActionBlock[] {
+export function buildPdfTextBlocks(pageIndex: number, items: PdfTextItem[], options: PdfTextBlockBuildOptions = {}): PdfTextBlock[] {
   const resolved = { ...DEFAULT_OPTIONS, ...options };
   const lines = buildLines(pageIndex, items, resolved);
   const medianHeight = median(lines.map((line) => line.height).filter((height) => height > 0));
-  const blocks: TextBlock[] = [];
+  const blocks: PdfTextBlock[] = [];
   let current: TextLine[] = [];
   let blockIndex = 0;
   for (const line of lines) {
@@ -282,7 +300,11 @@ export function buildPdfParagraphActionBlocks(pageIndex: number, items: PdfTextI
   }
   if (current.length) blocks.push(createBlock(pageIndex, blockIndex, current));
 
-  return blocks.filter((block) => block.text.trim())
+  return blocks.filter((block) => block.text.trim());
+}
+
+export function buildPdfParagraphActionBlocks(pageIndex: number, items: PdfTextItem[], options: PdfTextBlockBuildOptions = {}): PdfParagraphActionBlock[] {
+  return buildPdfTextBlocks(pageIndex, items, options)
     .map((block) => ({
       block_id: block.block_id,
       page_index: block.page_index,

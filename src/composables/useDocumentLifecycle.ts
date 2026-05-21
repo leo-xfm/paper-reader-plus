@@ -10,6 +10,7 @@ import type {
   DictionaryHoverPreview,
   DocumentContext,
   LibraryDocument,
+  ReaderPackageAiHistory,
   RectPct,
   SymbolDefinition,
 } from "@/types";
@@ -41,7 +42,7 @@ type UseDocumentLifecycleOptions = {
   arxivImportOpen: Ref<boolean>;
   arxivImporting: Ref<boolean>;
   arxivImportProgress: Ref<ArxivImportProgress | null>;
-  aiMessages: Ref<Array<{ role: "user" | "assistant"; content: string }>>;
+  aiMessages: Ref<ReaderPackageAiHistory>;
   pageTextItems: Ref<Record<number, PdfTextItem[]>>;
   showNotice: (message: string) => void;
   clearPages: () => void;
@@ -231,7 +232,6 @@ export function useDocumentLifecycle(options: UseDocumentLifecycleOptions) {
       const data = raw instanceof ArrayBuffer ? raw : new Uint8Array(raw).buffer;
       await options.loadPdf(data);
       await nextTick();
-      options.scrollToPage(0);
     } catch (cause) {
       options.error.value = cause instanceof Error ? cause.message : String(cause);
       options.context.value = null;

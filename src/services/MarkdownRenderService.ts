@@ -134,12 +134,53 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#39;");
 }
 
+function isEscaped(value: string, index: number) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function findClosingMathDelimiter(line: string, delimiter: "$" | "$$", from: number) {
+  let index = from;
+  while (index < line.length) {
+    const next = line.indexOf(delimiter, index);
+    if (next < 0) return -1;
+    if (!isEscaped(line, next) && (delimiter === "$$" || line[next + 1] !== "$")) return next;
+    index = next + delimiter.length;
+  }
+  return -1;
+}
+
 function replaceInlineMath(line: string, placeholders: MathPlaceholder[]) {
-  return line.replace(/(^|[^\\])\$([^$\n]+?)\$/g, (match, prefix: string, expression: string) => {
+  let output = "";
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] !== "$" || isEscaped(line, index)) {
+      output += line[index] || "";
+      index += 1;
+      continue;
+    }
+    const display = line[index + 1] === "$";
+    const delimiter = display ? "$$" : "$";
+    const contentStart = index + delimiter.length;
+    const end = findClosingMathDelimiter(line, delimiter, contentStart);
+    if (end < 0) {
+      output += line.slice(index);
+      break;
+    }
+    if (end === contentStart) {
+      output += line.slice(index, end + delimiter.length);
+      index = end + delimiter.length;
+      continue;
+    }
     const key = `${MATH_PLACEHOLDER_PREFIX}${placeholders.length}`;
-    placeholders.push({ key, html: renderMath(expression.trim(), false) });
-    return `${prefix}${key}`;
-  });
+    placeholders.push({ key, html: renderMath(line.slice(contentStart, end).trim(), display) });
+    output += key;
+    index = end + delimiter.length;
+  }
+  return output;
 }
 
 function replaceInlineHighlights(line: string, placeholders: MathPlaceholder[]) {

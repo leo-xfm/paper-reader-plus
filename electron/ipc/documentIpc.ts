@@ -188,6 +188,7 @@ async function deleteDocumentById(ctx: IpcContext, documentId: string, mode: Del
   delete ctx.store.ai_history[documentId];
   delete ctx.store.symbols[documentId];
   delete ctx.store.paragraph_translations[documentId];
+  delete ctx.store.view_states[documentId];
   ctx.store.assets = ctx.store.assets.filter((item) => item.document_id !== documentId);
   ctx.store.anchors = ctx.store.anchors.filter((item) => item.document_id !== documentId);
   ctx.store.annotations = ctx.store.annotations.filter((item) => item.document_id !== documentId);
@@ -263,7 +264,16 @@ export function registerDocumentIpc(ctx: IpcContext) {
       paragraph_translations: ctx.listParagraphTranslations(documentId),
       readerm_references: readerm?.references,
       referenced_documents: readerm?.referencedDocuments,
+      view_state: ctx.store.view_states[documentId] || null,
     };
+  });
+
+  ipcMain.handle("documents:update-view-state", (_event, documentId: string, viewState: unknown) => {
+    ctx.getDocument(documentId);
+    const cleaned = ctx.cleanDocumentViewState(viewState);
+    ctx.store.view_states[documentId] = cleaned;
+    ctx.saveStore();
+    return cleaned;
   });
 
   ipcMain.handle("documents:get-pdf-data", async (_event, documentId: string) => {

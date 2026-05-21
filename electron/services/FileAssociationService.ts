@@ -17,6 +17,7 @@ export type FileAssociationStatus = {
   associated: boolean;
   associations: Array<{
     extension: FileAssociationExtension;
+    registered: boolean;
     associated: boolean;
   }>;
 };
@@ -41,31 +42,67 @@ function runPowerShell(script: string) {
   return result.stdout.trim();
 }
 
+type WindowsAssociationRegistryEntry = {
+  extensionDefault?: string;
+  userChoiceProgId?: string;
+  command?: string;
+};
+
+export function parseWindowsAssociationStatus(entries: Record<string, WindowsAssociationRegistryEntry>, exePath: string) {
+  const expectedCommand = `"${exePath}" "%1"`.toLowerCase();
+  return ASSOCIATIONS.map((item) => {
+    const entry = entries[item.extension] || {};
+    const registered = entry.extensionDefault === item.progId && entry.command?.toLowerCase() === expectedCommand;
+    const associated = entry.userChoiceProgId
+      ? entry.userChoiceProgId === item.progId
+      : registered;
+    return {
+      extension: item.extension,
+      registered,
+      associated,
+    };
+  });
+}
+
 function currentWindowsAssociations() {
+  const exePath = executablePath();
   const script = `
 $ErrorActionPreference = "Stop"
-$extensions = @(".readerp", ".readerm", ".md")
-$result = @{}
-foreach ($extension in $extensions) {
+$items = @(
+  @{ Extension = ".readerp"; ProgId = "PaperReaderPlus.ReaderP" },
+  @{ Extension = ".readerm"; ProgId = "PaperReaderPlus.ReaderM" },
+  @{ Extension = ".md"; ProgId = "PaperReaderPlus.Markdown" }
+)
+$result = [ordered]@{}
+foreach ($item in $items) {
+  $extension = $item.Extension
+  $progId = $item.ProgId
   $choicePath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\$extension\\UserChoice"
   $classesPath = "HKCU:\\Software\\Classes\\$extension"
-  $progId = $null
+  $progIdPath = "HKCU:\\Software\\Classes\\$progId\\shell\\open\\command"
+  $userChoiceProgId = $null
+  $extensionDefault = $null
+  $command = $null
   if (Test-Path $choicePath) {
-    $progId = (Get-ItemProperty -Path $choicePath -Name ProgId -ErrorAction SilentlyContinue).ProgId
+    $userChoiceProgId = (Get-ItemProperty -Path $choicePath -Name ProgId -ErrorAction SilentlyContinue).ProgId
   }
-  if (-not $progId -and (Test-Path $classesPath)) {
-    $progId = (Get-ItemProperty -Path $classesPath -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
+  if (Test-Path $classesPath) {
+    $extensionDefault = (Get-Item -Path $classesPath).GetValue("")
   }
-  $result[$extension] = [bool]($progId -like "PaperReaderPlus.*")
+  if (Test-Path $progIdPath) {
+    $command = (Get-Item -Path $progIdPath).GetValue("")
+  }
+  $result[$extension] = @{
+    extensionDefault = $extensionDefault
+    userChoiceProgId = $userChoiceProgId
+    command = $command
+  }
 }
 $result | ConvertTo-Json -Compress
 `;
   const raw = runPowerShell(script);
-  const parsed = JSON.parse(raw || "{}") as Record<string, boolean>;
-  return ASSOCIATIONS.map((item) => ({
-    extension: item.extension,
-    associated: Boolean(parsed[item.extension]),
-  }));
+  const parsed = JSON.parse(raw || "{}") as Record<string, WindowsAssociationRegistryEntry>;
+  return parseWindowsAssociationStatus(parsed, exePath);
 }
 
 function associationForExtension(extension: string) {
@@ -81,7 +118,7 @@ export function getFileAssociationStatus(): FileAssociationStatus {
       platform: process.platform,
       supported: false,
       associated: false,
-      associations: ASSOCIATIONS.map((item) => ({ extension: item.extension, associated: false })),
+      associations: ASSOCIATIONS.map((item) => ({ extension: item.extension, registered: false, associated: false })),
     };
   }
   const associations = currentWindowsAssociations();

@@ -25,6 +25,13 @@ function cleanText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function collapseNonIndentSpaces(value: string) {
+  return value.split("\n").map((line) => {
+    const indent = line.match(/^[ \t]*/)?.[0] || "";
+    return `${indent}${line.slice(indent.length).replace(/[ \t]+/g, " ")}`;
+  }).join("\n");
+}
+
 function isEscaped(source: string, index: number) {
   let slashCount = 0;
   for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) slashCount += 1;
@@ -74,7 +81,7 @@ function stripLatexComments(source: string) {
 }
 
 export function renderSimpleLatexToMarkdown(source: string) {
-  return stripLatexComments(replaceOutsideMath(source, /\\mathcal\{([^{}]+)\}/g, "$\\mathcal{$1}$"))
+  return collapseNonIndentSpaces(stripLatexComments(replaceOutsideMath(source, /\\mathcal\{([^{}]+)\}/g, "$\\mathcal{$1}$"))
     .replace(/\\begin\{(?:equation|equation\*|displaymath)\}([\s\S]*?)\\end\{(?:equation|equation\*|displaymath)\}/g, (_match, body: string) => `\n\n$$\n${body.trim()}\n$$\n\n`)
     .replace(/\\begin\{(?:align|align\*|gather|gather\*)\}([\s\S]*?)\\end\{(?:align|align\*|gather|gather\*)\}/g, (_match, body: string) => `\n\n$$\n${body.trim().replace(/\\\\/g, "\\\\\n")}\n$$\n\n`)
     .replace(/\\\(([\s\S]*?)\\\)/g, (_match, body: string) => `$${body.trim()}$`)
@@ -90,8 +97,7 @@ export function renderSimpleLatexToMarkdown(source: string) {
     .replace(/\\text\{([^{}]*)\}/g, "$1")
     .replace(/\\label\{[^{}]*\}/g, "")
     .replace(/\\cite[tp]?\{([^{}]*)\}/g, "[$1]")
-    .replace(/\\ref\{([^{}]*)\}/g, "$1")
-    .replace(/[ \t]+/g, " ")
+    .replace(/\\ref\{([^{}]*)\}/g, "$1"))
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   continueListOnEnter,
   continueBlockquoteOnEnter,
+  completeBlockOnEnter,
   extractImages,
   findLinkAt,
   indentSelectedLines,
@@ -153,6 +154,16 @@ describe("LiveMarkdownEditor", () => {
     expect(edit.selection).toEqual({ start: "$$\n".length, end: "$$\n".length });
   });
 
+  it("completes a standalone display math delimiter on enter", () => {
+    const edit = completeBlockOnEnter("$$", 2);
+    expect(edit?.value).toBe("$$\n\n$$");
+    expect(edit?.selection).toEqual({ start: "$$\n".length, end: "$$\n".length });
+  });
+
+  it("does not complete display math delimiters inside fenced code blocks", () => {
+    expect(completeBlockOnEnter("```md\n$$", "```md\n$$".length)).toBeNull();
+  });
+
   it("exits an empty plus bullet without rewriting surrounding lines", () => {
     const source = "+ first\n+ ";
     const edit = continueListOnEnter(source, source.length);
@@ -203,6 +214,14 @@ describe("LiveMarkdownEditor", () => {
     const end = start + "    + second".length;
     const edit = indentSelectedLines(source, { start, end }, "out");
     expect(edit.value).toBe("+ first\n+ second\n    + third");
+  });
+
+  it("indents selected list lines with four spaces in live mode", () => {
+    const source = "+ first\n+ second";
+    const start = source.indexOf("+ second");
+    const end = start + "+ second".length;
+    const edit = indentSelectedLines(source, { start, end }, "in");
+    expect(edit.value).toBe("+ first\n    + second");
   });
 
   it("detects markdown links, bare urls, and reader anchors", () => {
@@ -535,6 +554,20 @@ describe("LiveMarkdownEditor", () => {
     expect(token).toMatchObject({ kind: "strong", text: "bold" });
     const link = findLiveMarkdownTokenAt(section, source.indexOf("site"));
     expect(link).toMatchObject({ kind: "link", text: "site", href: "https://example.com" });
+  });
+
+  it("keeps inline formatting tokens available inside headings", () => {
+    const source = "### **0. 摘要翻译**";
+    const sections = parseLiveMarkdownSections(source);
+    expect(sections[0].tokenRanges.find((token) => token.kind === "heading")).toMatchObject({
+      kind: "heading",
+      text: "**0. 摘要翻译**",
+      level: 3,
+    });
+    expect(findLiveMarkdownTokenAt(sections[0], source.indexOf("摘要"))).toMatchObject({
+      kind: "strong",
+      text: "0. 摘要翻译",
+    });
   });
 
   it("reports only changed sections by source hash and range", () => {

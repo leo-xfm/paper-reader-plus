@@ -40,7 +40,7 @@ import { parseReaderAnchorHref, parseReaderDocumentHref, type ReaderDocumentView
 import { ANNOTATION_COLORS, annotationMatchesFilters, sortAnnotations, type AnnotationFilters, type AnnotationToolMode } from "@/services/ReaderAnnotationService";
 import { buildAuthorNetwork, type AuthorDocumentInput } from "@/services/AuthorNetworkService";
 import { findSymbolDefinition, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, FileAssociationExtension, FileAssociationStatus, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
+import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, DocumentViewState, FileAssociationExtension, FileAssociationStatus, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -69,6 +69,8 @@ const {
   zoom,
   resetZoom,
   clearPages,
+  getViewState,
+  restoreViewState: restorePdfViewState,
 } = usePdfPages(pageNumbers);
 const loading = ref(false);
 const error = ref("");
@@ -141,7 +143,8 @@ const fileAssociationStatus = ref<FileAssociationStatus | null>(null);
 const fileAssociationBusy = ref<FileAssociationExtension | "all" | null>(null);
 const { setMarkdownFontSize } = useMarkdownZoom();
 const aiInput = ref("");
-const aiMessages = ref<Array<{ role: "user" | "assistant"; content: string }>>([]);
+const aiMessages = ref<ReaderPackageAiHistory>([]);
+const aiSummaryOutputChars = ref<number | null>(null);
 type DraftState = {
   title: string;
   note: string;
@@ -191,6 +194,10 @@ let markdownAutosaveRunning = false;
 let markdownAutosaveQueued = false;
 let markdownAutosavePrimed = false;
 const markdownAutosaveDelay = 900;
+let viewStateSaveTimer: number | null = null;
+let viewStateRestoring = false;
+const viewStateSaveDelay = 700;
+const markdownWorkspaceRef = ref<InstanceType<typeof MarkdownWorkspace> | null>(null);
 const readermWorkspaceRef = ref<InstanceType<typeof ReadermWorkspace> | null>(null);
 const readerSidePanelRef = ref<InstanceType<typeof ReaderSidePanel> | null>(null);
 const readermLayoutRef = ref<HTMLElement | null>(null);
@@ -212,6 +219,7 @@ const visibleSearchMatches = computed(() => searchOpen.value && searchQuery.valu
 const visibleActiveSearchMatch = computed(() => searchOpen.value && searchQuery.value.trim() ? activeSearchMatch.value : null);
 const activeOutlineItems = computed(() => context.value?.document.source_type === "readerm" ? readermOutlineItems.value : outlineItems.value);
 const readermReferences = computed(() => context.value?.readerm_references || []);
+const readermReferencedDocuments = computed(() => context.value?.referenced_documents || []);
 const activeReadermReference = computed(() => readermReferences.value.find((reference) => reference.reference_id === activeReadermReferenceId.value) || readermReferences.value[0] || null);
 const historyPdfDocuments = computed(() => documents.value.filter((document) => document.source_type !== "markdown"));
 const readermReferencedPdfDocumentId = computed(() => activeReadermReference.value?.status !== "missing-document" ? activeReadermReference.value?.document_id || "" : "");
@@ -223,7 +231,7 @@ const clampedReadermPdfPaneWidth = computed(() => clampReadermPdfPaneWidth(reade
 const readermLayoutStyle = computed(() => ({
   gridTemplateColumns: readermPdfCollapsed.value
     ? "minmax(0, 1fr) 0 var(--rail-collapsed-width)"
-    : `minmax(500px, 1fr) ${readermResizeHandleWidth}px ${clampedReadermPdfPaneWidth.value}px`,
+    : `minmax(420px, 1fr) ${readermResizeHandleWidth}px ${clampedReadermPdfPaneWidth.value}px`,
 }));
 const authorProfiles = computed(() => buildAuthorNetwork(Object.values(authorDocuments.value)));
 const agentStatusLabel = computed(() => settings.value
@@ -408,6 +416,9 @@ const {
   explainSelectionWithMetaphor,
   translateSelection,
   sendAi,
+  sendAiForTurnEdit,
+  redoAiTurn,
+  showAiTurnVersion,
   handlePanelSendAi,
   cancelActiveAiStream,
 } = useAiTranslationActions({
@@ -422,6 +433,7 @@ const {
   aiMessages,
   aiLoading,
   pendingAiTask,
+  aiSummaryOutputChars,
   translationModal,
   pageTextItems,
   pdfDocument,
@@ -448,11 +460,19 @@ const {
   t,
 });
 
-function cloneAiHistory(history: Array<{ role: "user" | "assistant"; content: string }> = []): ReaderPackageAiHistory {
-  return history.map((message) => ({ role: message.role, content: message.content }));
+function cloneAiHistory(history: ReaderPackageAiHistory = []): ReaderPackageAiHistory {
+  return history.map((message) => ({
+    role: message.role,
+    content: message.content,
+    ...(message.turn_id ? { turn_id: message.turn_id } : {}),
+    ...(message.versions?.length ? {
+      current_version: message.current_version,
+      versions: message.versions.map((version) => ({ ...version })),
+    } : {}),
+  }));
 }
 
-function createDraftState(document: LibraryDocument, note: string, summary: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): DraftState {
+function createDraftState(document: LibraryDocument, note: string, summary: string, history: ReaderPackageAiHistory = []): DraftState {
   return {
     title: document.title,
     note,
@@ -530,6 +550,133 @@ function ensureLoadedDocumentCache() {
   setDocumentCache(documentId, { draft: saved, saved });
 }
 
+function currentDocumentViewState(): DocumentViewState | null {
+  if (!context.value) return null;
+  const document = context.value.document;
+  const existing = context.value.view_state || { version: 1 };
+  const nextState: DocumentViewState = {
+    ...existing,
+    version: 1,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (document.source_type === "readerm") {
+    nextState.readerm = {
+      ...(existing.readerm || {}),
+      mode: readermMode.value,
+      ...(readermWorkspaceRef.value?.currentViewState() || {}),
+      source_view: readermPdfSourceView.value,
+      source_document_id: readermManualPdfDocumentId.value || undefined,
+      source_anchor_id: readermManualPdfAnchorId.value || undefined,
+      active_reference_id: activeReadermReferenceId.value || undefined,
+      pdf_collapsed: readermPdfCollapsed.value,
+      pdf_pane_width: readermPdfPaneWidth.value,
+    };
+    return nextState;
+  }
+
+  if (document.source_type === "markdown") {
+    nextState.markdown = {
+      ...(existing.markdown || {}),
+      mode: notesMode.value,
+      ...(markdownWorkspaceRef.value?.currentViewState() || {}),
+    };
+    return nextState;
+  }
+
+  const notesViewState = readerSidePanelRef.value?.currentMarkdownViewState("notes");
+  const summaryViewState = readerSidePanelRef.value?.currentMarkdownViewState("summary");
+  nextState.pdf = {
+    ...(existing.pdf || {}),
+    ...getViewState(),
+  };
+  nextState.reader_panel = {
+    ...(existing.reader_panel || {}),
+    active_tab: rightPanelTab.value,
+    collapsed: rightPanelCollapsed.value,
+    width: rightPanelWidth.value,
+    notes_mode: notesMode.value,
+    summary_mode: summaryMode.value,
+    ...(notesViewState ? { notes_scroll_top: notesViewState.scroll_top } : {}),
+    ...(summaryViewState ? { summary_scroll_top: summaryViewState.scroll_top } : {}),
+  };
+  return nextState;
+}
+
+async function saveCurrentViewStateNow(documentId = selectedDocumentId.value) {
+  if (!documentId || !context.value || context.value.document.document_id !== documentId) return;
+  const viewState = currentDocumentViewState();
+  if (!viewState) return;
+  context.value.view_state = viewState;
+  await window.paperReaderPlus.updateDocumentViewState(documentId, toIpcPlainObject(viewState));
+}
+
+function scheduleViewStateSave() {
+  if (viewStateRestoring || !context.value) return;
+  if (viewStateSaveTimer !== null) window.clearTimeout(viewStateSaveTimer);
+  const documentId = context.value.document.document_id;
+  viewStateSaveTimer = window.setTimeout(() => {
+    viewStateSaveTimer = null;
+    void saveCurrentViewStateNow(documentId);
+  }, viewStateSaveDelay);
+}
+
+async function restoreCurrentDocumentViewState() {
+  if (!context.value) return;
+  const state = context.value.view_state;
+  const sourceType = context.value.document.source_type;
+  viewStateRestoring = true;
+  if (viewStateSaveTimer !== null) {
+    window.clearTimeout(viewStateSaveTimer);
+    viewStateSaveTimer = null;
+  }
+  try {
+    if (sourceType === "readerm") {
+      const readerm = state?.readerm;
+      readermMode.value = readerm?.mode || defaultReadermEditorMode.value;
+      readermPdfSourceView.value = readerm?.source_view || "pdf";
+      readermManualPdfDocumentId.value = readerm?.source_document_id || "";
+      readermManualPdfAnchorId.value = readerm?.source_anchor_id || "";
+      readermPdfCollapsed.value = readerm?.pdf_collapsed === true;
+      readermPdfPaneWidth.value = readerm?.pdf_pane_width || readermPdfPaneWidth.value;
+      const savedReferenceId = readerm?.active_reference_id || "";
+      activeReadermReferenceId.value = savedReferenceId && readermReferences.value.some((reference) => reference.reference_id === savedReferenceId)
+        ? savedReferenceId
+        : readermReferences.value[0]?.reference_id || "";
+      await nextTick();
+      readermWorkspaceRef.value?.restoreViewState(readerm || null);
+      syncReadermPdfPaneWidth();
+      return;
+    }
+
+    if (sourceType === "markdown") {
+      notesMode.value = state?.markdown?.mode || defaultMarkdownEditorMode.value;
+      await nextTick();
+      markdownWorkspaceRef.value?.restoreViewState(state?.markdown || null);
+      return;
+    }
+
+    const panel = state?.reader_panel;
+    rightPanelTab.value = panel?.active_tab || rightPanelTab.value;
+    rightPanelCollapsed.value = panel?.collapsed === true;
+    rightPanelWidth.value = panel?.width || rightPanelWidth.value;
+    notesMode.value = panel?.notes_mode || defaultMarkdownEditorMode.value;
+    summaryMode.value = panel?.summary_mode || defaultMarkdownEditorMode.value;
+    await nextTick();
+    if (state?.pdf) restorePdfViewState(state.pdf);
+    else scrollToPage(0);
+    if (panel?.active_tab === "notes") {
+      readerSidePanelRef.value?.restoreMarkdownViewState("notes", { scroll_top: panel.notes_scroll_top || 0 });
+    } else if (panel?.active_tab === "summary") {
+      readerSidePanelRef.value?.restoreMarkdownViewState("summary", { scroll_top: panel.summary_scroll_top || 0 });
+    }
+  } finally {
+    window.setTimeout(() => {
+      viewStateRestoring = false;
+    }, 0);
+  }
+}
+
 function restoreDraftState(draft: DraftState) {
   titleDraft.value = draft.title;
   noteDraft.value = draft.note;
@@ -547,7 +694,7 @@ function isDocumentDirty(documentId: string) {
   return Boolean(entry && draftKey(entry.draft) !== draftKey(entry.saved));
 }
 
-function updateSavedAiHistorySnapshot(documentId: string, history: Array<{ role: "user" | "assistant"; content: string }>) {
+function updateSavedAiHistorySnapshot(documentId: string, history: ReaderPackageAiHistory) {
   const entry = documentDraftCache.value[documentId];
   if (!entry) return;
   const aiHistory = cloneAiHistory(history);
@@ -585,11 +732,13 @@ async function openDocument(documentId: string) {
     addOpenDocumentTab(documentId);
     return;
   }
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await flushMarkdownAutosave(selectedDocumentId.value);
   addOpenDocumentTab(documentId);
   await loadDocument(documentId);
   ensureLoadedDocumentCache();
+  await restoreCurrentDocumentViewState();
   await refreshDocumentHealth(documentId);
 }
 
@@ -749,6 +898,7 @@ async function saveSummary() {
 async function closeDocumentTab(documentId: string) {
   const index = openDocumentIds.value.indexOf(documentId);
   if (index === -1) return;
+  if (selectedDocumentId.value === documentId) await saveCurrentViewStateNow(documentId);
   await flushMarkdownAutosave(documentId);
   if (isDocumentDirty(documentId)) {
     const document = documents.value.find((item) => item.document_id === documentId);
@@ -767,6 +917,7 @@ async function closeDocumentTab(documentId: string) {
   if (nextDocumentId) {
     await loadDocument(nextDocumentId);
     ensureLoadedDocumentCache();
+    await restoreCurrentDocumentViewState();
   } else {
     clearActiveDocumentState();
   }
@@ -824,42 +975,49 @@ function registerCurrentDocumentTab() {
 }
 
 async function importPdf() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleImportPdf();
   registerCurrentDocumentTab();
 }
 
 async function importArxiv() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleImportArxiv();
   registerCurrentDocumentTab();
 }
 
 async function importReaderPackage() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleImportReaderPackage();
   registerCurrentDocumentTab();
 }
 
 async function importReadermPackage() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleImportReadermPackage();
   registerCurrentDocumentTab();
 }
 
 async function createReaderPackageFromPdf() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleCreateReaderPackageFromPdf();
   registerCurrentDocumentTab();
 }
 
 async function createReaderPackageFromMarkdown() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleCreateReaderPackageFromMarkdown();
   registerCurrentDocumentTab();
 }
 
 async function createEmptyReaderm() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleCreateEmptyReaderm();
   readermMode.value = defaultReadermEditorMode.value;
@@ -867,6 +1025,7 @@ async function createEmptyReaderm() {
 }
 
 async function createReadermFromMarkdown() {
+  await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await lifecycleCreateReadermFromMarkdown();
   registerCurrentDocumentTab();
@@ -986,10 +1145,12 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (markdownAutosaveTimer !== null) window.clearTimeout(markdownAutosaveTimer);
+  if (viewStateSaveTimer !== null) window.clearTimeout(viewStateSaveTimer);
   readermLayoutResizeObserver?.disconnect();
   readermLayoutResizeObserver = null;
   markdownAutosaveDocumentId = "";
   if (context.value) cacheCurrentDocumentDraft();
+  void saveCurrentViewStateNow();
   cancelActiveAiStream();
   window.removeEventListener("keydown", handleKeydown);
   window.removeEventListener("pointerdown", handleGlobalPointerDown);
@@ -1001,6 +1162,7 @@ onBeforeUnmount(() => {
 
 watch(currentPageNumber, (page) => {
   pageJumpDraft.value = String(page);
+  scheduleViewStateSave();
 });
 
 watch(searchMatches, (matches) => {
@@ -1022,6 +1184,22 @@ watch(readermLayoutRef, (element) => {
 
 watch(() => [readermPdfCollapsed.value, readermPdfPaneWidth.value, readermLayoutWidth.value] as const, syncReadermPdfPaneWidth);
 
+watch(() => [
+  rightPanelTab.value,
+  rightPanelCollapsed.value,
+  rightPanelWidth.value,
+  notesMode.value,
+  summaryMode.value,
+  readermMode.value,
+  readermPdfSourceView.value,
+  readermManualPdfDocumentId.value,
+  readermManualPdfAnchorId.value,
+  activeReadermReferenceId.value,
+  readermPdfCollapsed.value,
+  readermPdfPaneWidth.value,
+  pdfZoom.value,
+] as const, scheduleViewStateSave);
+
 watch(documents, (items) => {
   const existingIds = new Set(items.map((document) => document.document_id));
   filterOpenDocumentTabs((documentId) => existingIds.has(documentId));
@@ -1038,13 +1216,25 @@ watch(documents, (items) => {
 });
 
 watch(() => context.value?.document.document_id, () => {
-  readermManualPdfDocumentId.value = "";
-  readermManualPdfAnchorId.value = "";
-  if (context.value?.document.source_type === "readerm") readermMode.value = defaultReadermEditorMode.value;
-  if (context.value?.document.source_type === "markdown") notesMode.value = defaultMarkdownEditorMode.value;
+  const viewState = context.value?.view_state;
+  if (context.value?.document.source_type === "readerm") {
+    readermManualPdfDocumentId.value = viewState?.readerm?.source_document_id || "";
+    readermManualPdfAnchorId.value = viewState?.readerm?.source_anchor_id || "";
+    readermPdfSourceView.value = viewState?.readerm?.source_view || "pdf";
+    readermPdfCollapsed.value = viewState?.readerm?.pdf_collapsed === true;
+    if (viewState?.readerm?.pdf_pane_width) readermPdfPaneWidth.value = viewState.readerm.pdf_pane_width;
+    readermMode.value = viewState?.readerm?.mode || defaultReadermEditorMode.value;
+  } else {
+    readermManualPdfDocumentId.value = "";
+    readermManualPdfAnchorId.value = "";
+  }
+  if (context.value?.document.source_type === "markdown") notesMode.value = viewState?.markdown?.mode || defaultMarkdownEditorMode.value;
   if (context.value?.document.source_type !== "readerm" && context.value?.document.source_type !== "markdown") {
-    notesMode.value = defaultMarkdownEditorMode.value;
-    summaryMode.value = defaultMarkdownEditorMode.value;
+    notesMode.value = viewState?.reader_panel?.notes_mode || defaultMarkdownEditorMode.value;
+    summaryMode.value = viewState?.reader_panel?.summary_mode || defaultMarkdownEditorMode.value;
+    rightPanelTab.value = viewState?.reader_panel?.active_tab || rightPanelTab.value;
+    rightPanelCollapsed.value = viewState?.reader_panel?.collapsed === true;
+    if (viewState?.reader_panel?.width) rightPanelWidth.value = viewState.reader_panel.width;
   }
   cancelReadermOutlineRefresh();
   void nextTick(refreshReadermOutlineNow);
@@ -1268,7 +1458,11 @@ async function updateFileAssociation(extension: FileAssociationExtension, associ
       ? await window.paperReaderPlus.unregisterFileAssociation(extension)
       : await window.paperReaderPlus.registerFileAssociation(extension);
     const updated = fileAssociationStatus.value.associations.find((item) => item.extension === extension);
-    showNotice(t(updated?.associated ? "settings.fileAssociationBoundNotice" : "settings.fileAssociationUnboundNotice", { extension }));
+    showNotice(t(updated?.associated
+      ? "settings.fileAssociationBoundNotice"
+      : updated?.registered
+        ? "settings.fileAssociationRegisteredOnlyNotice"
+        : "settings.fileAssociationUnboundNotice", { extension }));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
   } finally {
@@ -1347,6 +1541,7 @@ async function handleCloseRequest() {
   if (closeRequestRunning) return;
   closeRequestRunning = true;
   try {
+    await saveCurrentViewStateNow();
     cacheCurrentDocumentDraft();
     await flushMarkdownAutosave();
     const dirtyDocumentId = openDocumentIds.value.find((documentId) => isDocumentDirty(documentId));
@@ -1658,8 +1853,8 @@ function captureReadermRegion(payload?: { start: number; end: number } | { selec
 }
 
 function clampReadermPdfPaneWidth(width: number) {
-  const minMarkdownWidth = 500;
-  const minPdfWidth = 420;
+  const minMarkdownWidth = 420;
+  const minPdfWidth = 360;
   const maxPdfWidth = 900;
   const layoutWidth = readermLayoutWidth.value || readermLayoutRef.value?.clientWidth || 1200;
   const maxByLayout = Math.max(minPdfWidth, layoutWidth - minMarkdownWidth - readermResizeHandleWidth);
@@ -1789,6 +1984,7 @@ function focusAnchor(anchorId: string) {
             :editing-title="editingTitle"
             :document-id="context.document.document_id"
             :references="readermReferences"
+            :referenced-documents="readermReferencedDocuments"
             :active-reference-id="activeReadermReference?.reference_id || ''"
             :settings="settings"
             @edit-title="editingTitle = true"
@@ -1799,6 +1995,7 @@ function focusAnchor(anchorId: string) {
             @paste-image="pasteImageAsset({ target: 'notes', ...$event })"
             @resize-image="resizeMarkdownAssetImage({ target: 'notes', assetPath: $event.assetPath })"
             @link-click="handleReadermLink"
+            @select-reference="selectReadermReference"
             @update-settings="updateSettingsPatch"
           />
           <button
@@ -1873,6 +2070,7 @@ function focusAnchor(anchorId: string) {
 
         <MarkdownWorkspace
           v-else-if="context.document.source_type === 'markdown'"
+          ref="markdownWorkspaceRef"
           v-model:title-draft="titleDraft"
           v-model:markdown="noteDraft"
           v-model:mode="notesMode"
@@ -1990,6 +2188,7 @@ function focusAnchor(anchorId: string) {
               :ai-messages="aiMessages"
               :ai-loading="aiLoading"
               :summary-waiting="summaryWaiting"
+              :ai-summary-output-chars="aiSummaryOutputChars"
               :symbols="symbols"
               :active-symbol="activeSymbol"
               :symbol-refresh-progress="symbolRefreshProgress"
@@ -2002,6 +2201,9 @@ function focusAnchor(anchorId: string) {
               @paste-image="pasteImageAsset"
               @resize-image="resizeMarkdownAssetImage"
               @send-ai="handlePanelSendAi"
+              @edit-ai-turn="sendAiForTurnEdit($event.turnId, $event.content)"
+              @redo-ai-turn="redoAiTurn($event.turnId, $event.mode)"
+              @show-ai-turn-version="showAiTurnVersion($event.turnId, $event.versionIndex)"
               @stop-ai="cancelActiveAiStream"
               @select-annotation="selectAnnotation"
               @update-annotation="updateAnnotation($event.annotation, $event.patch)"

@@ -6,7 +6,7 @@ import {
   type PluginValue,
   type ViewUpdate,
 } from "@codemirror/view";
-import { StateField, type Extension, type Range } from "@codemirror/state";
+import { StateEffect, StateField, type EditorSelection, type EditorState, type Extension, type Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { decorateInline } from "./decorate/inline.js";
 import { decorateHeading } from "./decorate/heading.js";
@@ -54,6 +54,8 @@ export interface SilkdownPluginOptions {
     finishEditingMathBlock?: string;
     mermaidDiagram?: string;
   };
+  suppressSelectionReveal?: () => boolean;
+  selectionRevealOverride?: (state: EditorState) => EditorSelection | null;
 }
 
 export type SilkdownLiveBlockLabels = Required<NonNullable<SilkdownPluginOptions["liveBlockLabels"]>>;
@@ -67,6 +69,7 @@ const defaultLiveBlockLabels: SilkdownLiveBlockLabels = {
 };
 
 const INLINE_NODES = new Set(["Emphasis", "StrongEmphasis", "InlineCode", "Strikethrough"]);
+const EMPTY_SELECTION = { ranges: [] } as unknown as EditorSelection;
 
 const HEADING_NODES = new Set([
   "ATXHeading1",
@@ -77,24 +80,46 @@ const HEADING_NODES = new Set([
   "ATXHeading6",
 ]);
 
+const compositionEffect = StateEffect.define<boolean>();
+const compositionField = StateField.define<boolean>({
+  create() {
+    return false;
+  },
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(compositionEffect)) return effect.value;
+    }
+    return value;
+  },
+});
+
 export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
   const disabled = new Set(opts.disable ?? []);
   const urlPolicy = opts.urlPolicy;
   const liveBlockLabels = { ...defaultLiveBlockLabels, ...opts.liveBlockLabels };
+  const effectiveSelection = (state: EditorState) => {
+    const override = opts.selectionRevealOverride?.(state);
+    if (opts.suppressSelectionReveal?.()) return override ?? EMPTY_SELECTION;
+    return override ?? state.selection;
+  };
   const htmlBlockField = StateField.define<DecorationSet>({
     create(state) {
       if (disabled.has("HtmlBlock")) return Decoration.none;
       const ranges: Range<Decoration>[] = [];
       decorateComplexTables(ranges, state.doc);
-      decorateHtmlBlocks(ranges, state.doc, state.selection, opts.htmlBlockLiveEnabled !== false);
+      decorateHtmlBlocks(ranges, state.doc, effectiveSelection(state), opts.htmlBlockLiveEnabled !== false);
       return Decoration.set(ranges, true);
     },
     update(value, transaction) {
       if (disabled.has("HtmlBlock")) return Decoration.none;
-      if (!transaction.docChanged && !transaction.selection) return value.map(transaction.changes);
+      const composing = transaction.state.field(compositionField, false);
+      const wasComposing = transaction.startState.field(compositionField, false);
+      if (composing) return value.map(transaction.changes);
+      if (transaction.isUserEvent("input.type.compose")) return value.map(transaction.changes);
+      if (!wasComposing && !transaction.docChanged && !transaction.selection && transaction.effects.length === 0) return value.map(transaction.changes);
       const ranges: Range<Decoration>[] = [];
       decorateComplexTables(ranges, transaction.state.doc);
-      decorateHtmlBlocks(ranges, transaction.state.doc, transaction.state.selection, opts.htmlBlockLiveEnabled !== false);
+      decorateHtmlBlocks(ranges, transaction.state.doc, effectiveSelection(transaction.state), opts.htmlBlockLiveEnabled !== false);
       return Decoration.set(ranges, true);
     },
     provide: (field) => [
@@ -120,7 +145,11 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
     },
     update(value, transaction) {
       if (disabled.has("Table")) return Decoration.none;
-      if (!transaction.docChanged) return value.map(transaction.changes);
+      const composing = transaction.state.field(compositionField, false);
+      const wasComposing = transaction.startState.field(compositionField, false);
+      if (composing) return value.map(transaction.changes);
+      if (transaction.isUserEvent("input.type.compose")) return value.map(transaction.changes);
+      if (!wasComposing && !transaction.docChanged) return value.map(transaction.changes);
       const ranges: Range<Decoration>[] = [];
       const atomicRanges: Range<Decoration>[] = [];
       const handledTableStarts = new Set<number>();
@@ -140,14 +169,18 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
     create(state) {
       if (disabled.has("Math") || opts.mathEnabled === false) return Decoration.none;
       const ranges: Range<Decoration>[] = [];
-      decorateBlockMath(ranges, state.doc, state.selection, liveBlockLabels);
+      decorateBlockMath(ranges, state.doc, effectiveSelection(state), liveBlockLabels);
       return Decoration.set(ranges, true);
     },
     update(value, transaction) {
       if (disabled.has("Math") || opts.mathEnabled === false) return Decoration.none;
-      if (!transaction.docChanged && !transaction.selection) return value.map(transaction.changes);
+      const composing = transaction.state.field(compositionField, false);
+      const wasComposing = transaction.startState.field(compositionField, false);
+      if (composing) return value.map(transaction.changes);
+      if (transaction.isUserEvent("input.type.compose")) return value.map(transaction.changes);
+      if (!wasComposing && !transaction.docChanged && !transaction.selection && transaction.effects.length === 0) return value.map(transaction.changes);
       const ranges: Range<Decoration>[] = [];
-      decorateBlockMath(ranges, transaction.state.doc, transaction.state.selection, liveBlockLabels);
+      decorateBlockMath(ranges, transaction.state.doc, effectiveSelection(transaction.state), liveBlockLabels);
       return Decoration.set(ranges, true);
     },
     provide: (field) => [
@@ -173,9 +206,14 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
       }
 
       update(u: ViewUpdate) {
-        // IME guard: don't churn decorations mid-composition; the IME relies on
-        // a stable DOM during composition or it drops characters.
-        if (u.view.composing) return;
+        // IME guard: keep the existing rendered DOM stable while the browser
+        // owns an active composition range. Rebuild after composition ends.
+        const composing = u.state.field(compositionField, false) || u.view.composing;
+        if (composing) {
+          this.decorations = this.decorations.map(u.changes);
+          this.atomicDecorations = this.atomicDecorations.map(u.changes);
+          return;
+        }
 
         if (
           u.docChanged ||
@@ -194,7 +232,7 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
         const ranges: Range<Decoration>[] = [];
         const atomicRanges: Range<Decoration>[] = [];
         const tree = syntaxTree(view.state);
-        const sel = view.state.selection;
+        const sel = effectiveSelection(view.state);
         const doc = view.state.doc;
         const references = buildLinkReferences(tree, doc);
         const codeLineNumbers = opts.codeLineNumbers !== false;
@@ -225,7 +263,7 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
 
               if (HEADING_NODES.has(n.name)) {
                 decorateHeading(ranges, atomicRanges, n.node, doc, sel);
-                return false;
+                // Descend so inline marks inside headings (e.g. ### **Title**) render too.
               }
 
               if (INLINE_NODES.has(n.name)) {
@@ -297,11 +335,23 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
       }
     },
     {
+      eventHandlers: {
+        compositionstart(_event, view) {
+          view.dispatch({ effects: compositionEffect.of(true) });
+          return false;
+        },
+        compositionend(_event, view) {
+          window.setTimeout(() => {
+            if (!view.composing) view.dispatch({ effects: compositionEffect.of(false) });
+          }, 0);
+          return false;
+        },
+      },
       provide: (p) => [
         EditorView.decorations.of((view) => view.plugin(p)?.decorations ?? Decoration.none),
         EditorView.atomicRanges.of((view) => view.plugin(p)?.atomicDecorations ?? Decoration.none),
       ],
     },
   );
-  return [htmlBlockField, tableField, blockMathField, silkdownViewPlugin];
+  return [compositionField, htmlBlockField, tableField, blockMathField, silkdownViewPlugin];
 }

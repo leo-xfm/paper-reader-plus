@@ -31,3 +31,14 @@ export function selectionTouchesLineRange(
   }
   return false;
 }
+
+export function selectionTouchesRange(
+  selection: EditorSelection,
+  from: number,
+  to: number,
+): boolean {
+  return selection.ranges.some((range) => {
+    if (range.empty) return range.from >= from && range.from <= to;
+    return range.from < to && range.to > from;
+  });
+}

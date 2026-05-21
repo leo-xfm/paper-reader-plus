@@ -1,6 +1,6 @@
 import { Decoration } from "@codemirror/view";
 import type { EditorSelection, Range, Text } from "@codemirror/state";
-import { selectionTouchesLineRange } from "../util/selection.js";
+import { selectionTouchesRange } from "../util/selection.js";
 import { pushRevealableMark } from "./shared.js";
 
 const UNDERLINE_MARK = Decoration.mark({ class: "sd-underline" });
@@ -25,7 +25,7 @@ export function decorateUnderline(
       const closeFrom = start + match[0].length - 4;
       const end = start + match[0].length;
       if (openTo >= closeFrom) continue;
-      const revealed = selectionTouchesLineRange(doc, sel, start, end);
+      const revealed = selectionTouchesRange(sel, start, end);
       ranges.push(UNDERLINE_MARK.range(openTo, closeFrom));
       pushRevealableMark(ranges, atomicRanges, revealed, start, openTo);
       pushRevealableMark(ranges, atomicRanges, revealed, closeFrom, end);

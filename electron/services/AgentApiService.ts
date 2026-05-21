@@ -296,18 +296,38 @@ export async function requestAgentChat(settings: Settings, payload: AgentChatPay
 export async function* streamAgentChatDeltas(settings: Settings, payload: AgentChatPayload, options: AgentStreamOptions = {}) {
   if (!settings.ai_api_key) throw new Error("AI API key is not configured.");
   if (settings.agent_api_type !== "chat") throw new Error("Only chat agent API is currently supported.");
-  const response = await fetch(`${settings.ai_base_url.replace(/\/$/, "")}/chat/completions`, {
+  const endpoint = `${settings.ai_base_url.replace(/\/$/, "")}/chat/completions`;
+  const body = agentRequestBody(settings, payload, true);
+  let response = await fetch(endpoint, {
     method: "POST",
     signal: options.signal,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${settings.ai_api_key}`,
     },
-    body: JSON.stringify(agentRequestBody(settings, payload, true)),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `AI request failed: ${response.status}`);
+    if (hasImageContent(body.messages)) {
+      response = await fetch(endpoint, {
+        method: "POST",
+        signal: options.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.ai_api_key}`,
+        },
+        body: JSON.stringify(textOnlyAgentRequestBody(settings, payload, true)),
+      });
+      if (response.ok) {
+        // Continue below and stream the text-only retry.
+      } else {
+        const retryText = await response.text();
+        throw new Error(retryText || text || `AI request failed: ${response.status}`);
+      }
+    } else {
+      throw new Error(text || `AI request failed: ${response.status}`);
+    }
   }
   if (!response.body) throw new Error("AI stream did not return a readable body.");
 

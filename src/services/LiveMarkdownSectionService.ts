@@ -152,7 +152,7 @@ export function parseLiveMarkdownSections(source: string): LiveMarkdownSection[]
 
 function pushToken(tokens: LiveMarkdownToken[], token: LiveMarkdownToken) {
   if (token.end <= token.start) return;
-  if (tokens.some((existing) => token.start < existing.end && token.end > existing.start)) return;
+  if (token.kind !== "heading" && tokens.some((existing) => existing.kind !== "heading" && token.start < existing.end && token.end > existing.start)) return;
   tokens.push(token);
 }
 
@@ -167,7 +167,6 @@ export function parseLiveMarkdownInlineTokens(source: string, offset = 0): LiveM
       text: heading[2],
       level: heading[1].length,
     });
-    return tokens;
   }
 
   const patterns: Array<{ kind: LiveMarkdownTokenKind; pattern: RegExp; textIndex: number; hrefIndex?: number; leadingIndex?: number }> = [
@@ -206,7 +205,9 @@ export function findLiveMarkdownSectionAt(sections: LiveMarkdownSection[], posit
 
 export function findLiveMarkdownTokenAt(section: LiveMarkdownSection | null, position: number) {
   if (!section) return null;
-  return section.tokenRanges.find((token) => position >= token.start && position <= token.end) || null;
+  return section.tokenRanges.find((token) => token.kind !== "heading" && position >= token.start && position <= token.end)
+    || section.tokenRanges.find((token) => position >= token.start && position <= token.end)
+    || null;
 }
 
 export function changedLiveMarkdownSections(previous: LiveMarkdownSection[], next: LiveMarkdownSection[]) {

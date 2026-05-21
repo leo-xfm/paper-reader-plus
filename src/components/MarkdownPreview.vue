@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { createLruStringCache } from "@/composables/useLruStringCache";
+import { scaledMarkdownLineHeight } from "@/composables/useMarkdownZoom";
 import { markdownBodyFontFamily, markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import { renderMarkdown } from "@/services/MarkdownRenderService";
 import { renderMermaidElements } from "@/services/MermaidRenderService";
@@ -88,7 +89,7 @@ const renderOptions = computed(() => ({
 const highlightColor = computed(() => props.settings?.markdown_highlight_color || "#fff3bf");
 const bodyFontFamily = computed(() => markdownBodyFontFamily(props.settings?.markdown_font_family || "current"));
 const codeFontFamily = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
-const lineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const lineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const codeFontScale = computed(() => props.settings?.markdown_code_font_scale || 0.86);
 const codeLineHeight = computed(() => props.settings?.markdown_code_line_height || 1.22);
 const renderedHtml = computed(() => renderMarkdown(resolvedSource.value || "", renderOptions.value));

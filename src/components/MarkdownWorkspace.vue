@@ -34,7 +34,7 @@ import UiDropdown from "@/components/UiDropdown.vue";
 import LiveMarkdownEditor from "@/components/LiveMarkdownEditor.vue";
 import MarkdownPreview from "@/components/MarkdownPreview.vue";
 import SegmentedModeSwitch from "@/components/SegmentedModeSwitch.vue";
-import { useMarkdownZoom } from "@/composables/useMarkdownZoom";
+import { scaledMarkdownLineHeight, useMarkdownZoom } from "@/composables/useMarkdownZoom";
 import { useI18n, type I18nKey } from "@/i18n";
 import {
   clearMarkdownFormatting,
@@ -83,7 +83,7 @@ const textareaSelection = ref<SourceSelection>({ start: 0, end: 0 });
 const calloutKind = ref<"NOTE" | "TIP" | "IMPORTANT" | "WARNING" | "CAUTION">("NOTE");
 const { markdownFontSize, handleMarkdownWheel } = useMarkdownZoom();
 const { t } = useI18n();
-const markdownLineHeight = computed(() => props.settings?.markdown_line_height || 1.6);
+const markdownLineHeight = computed(() => scaledMarkdownLineHeight(props.settings?.markdown_line_height, props.settings?.markdown_default_font_size));
 const markdownCodeFontFamilyCss = computed(() => markdownCodeFontFamily(props.settings?.markdown_code_font_family || "Consolas"));
 
 function updateMarkdownFontFamily(value: string) {
@@ -328,6 +328,44 @@ function searchCountText() {
 watch([searchQuery, () => props.mode, () => props.markdown], () => {
   activePreviewMatchIndex.value = 0;
   if (props.mode === "preview") void nextTick(markPreviewSearch);
+});
+
+function currentViewState() {
+  if (props.mode === "live") return liveEditor.value?.currentViewState() || {};
+  if (props.mode === "preview") return {
+    scroll_top: previewRoot.value?.scrollTop || 0,
+  };
+  const editor = textarea.value;
+  return {
+    scroll_top: editor?.scrollTop || 0,
+    selection_start: editor?.selectionStart ?? textareaSelection.value.start,
+    selection_end: editor?.selectionEnd ?? textareaSelection.value.end,
+  };
+}
+
+async function restoreViewState(state?: { scroll_top?: number; selection_start?: number; selection_end?: number } | null) {
+  if (!state) return;
+  await nextTick();
+  if (props.mode === "live") {
+    liveEditor.value?.restoreViewState(state);
+    return;
+  }
+  if (props.mode === "preview") {
+    if (previewRoot.value) previewRoot.value.scrollTop = state.scroll_top || 0;
+    return;
+  }
+  const editor = textarea.value;
+  if (!editor) return;
+  editor.scrollTop = state.scroll_top || 0;
+  const start = Math.max(0, Math.min(state.selection_start ?? 0, editor.value.length));
+  const end = Math.max(0, Math.min(state.selection_end ?? start, editor.value.length));
+  editor.setSelectionRange(start, end);
+  updateTextareaSelection();
+}
+
+defineExpose({
+  currentViewState,
+  restoreViewState,
 });
 </script>
 
