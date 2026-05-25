@@ -291,10 +291,10 @@ export type AnnotationUpdateRequest = Partial<Pick<Annotation, "type" | "color" 
 
 export type Settings = {
   ui_language: "system" | "en-US" | "zh-CN";
-  agent_provider: "volcengine";
   ai_base_url: string;
   ai_api_key: string;
   ai_model: string;
+  ai_max_output_tokens: number;
   agent_api_type: "chat" | "responses";
   professional_field: string;
   research_area: string;
@@ -303,6 +303,9 @@ export type Settings = {
   copy_quote_template: string;
   quote_to_note_template: string;
   quote_to_readerm_template: string;
+  pdf_paragraph_actions_enabled: boolean;
+  pdf_author_graph_enabled: boolean;
+  pdf_internal_link_preview_enabled: boolean;
   summary_source: SummarySourceMode;
   summary_text_char_limit: number;
   summary_figure_attachment_limit: number;
@@ -321,6 +324,7 @@ export type Settings = {
   markdown_highlight_color: string;
   markdown_math_enabled: boolean;
   markdown_html_live_enabled: boolean;
+  markdown_live_list_folding_enabled: boolean;
   markdown_default_editor_mode: MarkdownEditorMode;
   readerm_edit_split_default: boolean;
   readerm_preview_position: ReadermPreviewPosition;

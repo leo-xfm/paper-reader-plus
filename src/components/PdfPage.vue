@@ -27,9 +27,15 @@ const props = withDefaults(defineProps<{
   captureImageScale?: number;
   canTranslate?: boolean;
   canAskAi?: boolean;
+  pdfParagraphActionsEnabled?: boolean;
+  pdfAuthorGraphEnabled?: boolean;
+  pdfInternalLinkPreviewEnabled?: boolean;
 }>(), {
   canTranslate: true,
   canAskAi: true,
+  pdfParagraphActionsEnabled: true,
+  pdfAuthorGraphEnabled: true,
+  pdfInternalLinkPreviewEnabled: true,
 });
 
 const { t } = useI18n();
@@ -233,7 +239,7 @@ function cancelImageSelection() {
       :metrics="metrics"
       :page-element="pageRef"
       :disabled="imageSelectMode"
-      :author-profiles="authorProfiles"
+      :author-profiles="pdfAuthorGraphEnabled === false ? [] : authorProfiles"
       @selection="emit('selection', $event)"
       @text-items="handleTextItems"
       @symbol-click="emit('symbolClick', $event)"
@@ -245,13 +251,14 @@ function cancelImageSelection() {
       :pdf-document="pdfDocument"
       :page-number="pageNumber"
       :metrics="metrics"
+      :preview-enabled="pdfInternalLinkPreviewEnabled !== false"
       @link-click="emit('linkClick', $event)"
       @link-preview="emit('linkPreview', $event)"
       @clear-link-preview="emit('clearReferencePreview')"
       @links="pageLinks = $event"
     />
     <PdfReferenceLayer
-      v-if="canvasRendered && pageTextItems.length"
+      v-if="canvasRendered && pageTextItems.length && pdfInternalLinkPreviewEnabled !== false"
       :page-index="pageIndex"
       :text-items="pageTextItems"
       :link-annotations="pageLinks"
@@ -260,7 +267,7 @@ function cancelImageSelection() {
       @jump="emit('referenceJump', $event)"
     />
     <PdfAuthorLayer
-      v-if="canvasRendered && pageTextItems.length"
+      v-if="canvasRendered && pageTextItems.length && pdfAuthorGraphEnabled !== false"
       :page-index="pageIndex"
       :text-items="pageTextItems"
       :author-profiles="authorProfiles || []"
@@ -275,7 +282,7 @@ function cancelImageSelection() {
       @clear-dictionary-hover="emit('clearDictionaryHover')"
     />
     <PdfParagraphActionLayer
-      v-if="canvasRendered && pageTextItems.length && !imageSelectMode"
+      v-if="canvasRendered && pageTextItems.length && !imageSelectMode && pdfParagraphActionsEnabled !== false"
       :page-index="pageIndex"
       :text-items="pageTextItems"
       :metrics="metrics"

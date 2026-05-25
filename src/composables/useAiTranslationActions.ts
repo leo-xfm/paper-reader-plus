@@ -74,6 +74,36 @@ type TranslateSelectionOptions = {
   };
 };
 
+function markdownIndentWidth(indent: string) {
+  return indent.replace(/\t/g, "    ").length;
+}
+
+function lineHasIndentedChild(lines: string[], index: number, indentWidth: number) {
+  for (let i = index + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const match = /^(\s*)/.exec(line);
+    const width = markdownIndentWidth(match?.[1] || "");
+    if (width <= indentWidth) return false;
+    return true;
+  }
+  return false;
+}
+
+function expandFoldableMarkdownLists(source: string) {
+  const lines = source.split("\n");
+  let changed = false;
+  const nextLines = lines.map((line, index) => {
+    const match = /^(\s*)\*(\s+)(?!\[[ xX]\](?:\s|$))/.exec(line);
+    if (!match) return line;
+    const [, indent, gap] = match;
+    if (!lineHasIndentedChild(lines, index, markdownIndentWidth(indent))) return line;
+    changed = true;
+    return `${indent}+${gap}${line.slice(match[0].length)}`;
+  });
+  return changed ? nextLines.join("\n") : source;
+}
+
 export function useAiTranslationActions(options: UseAiTranslationActionsOptions) {
   let activeAiStreamCancel: (() => void) | null = null;
 
@@ -791,13 +821,14 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         summaryStatusTimer = null;
       };
       const commitSummaryAssistant = (content: string) => {
-        options.summaryDraft.value = content;
+        const expandedContent = expandFoldableMarkdownLists(content);
+        options.summaryDraft.value = expandedContent;
         const current = options.aiMessages.value[assistantIndex];
         if (!current) return;
         const versions = current.versions?.length
-          ? current.versions.map((version, index) => index === 0 ? { ...version, assistant_content: content } : version)
-          : [{ user_content: userContent, assistant_content: content, created_at: nowIso() }];
-        options.aiMessages.value[assistantIndex] = { ...current, content, versions, current_version: 0 };
+          ? current.versions.map((version, index) => index === 0 ? { ...version, assistant_content: expandedContent } : version)
+          : [{ user_content: userContent, assistant_content: expandedContent, created_at: nowIso() }];
+        options.aiMessages.value[assistantIndex] = { ...current, content: expandedContent, versions, current_version: 0 };
       };
       try {
         activeAiStreamCancel = window.paperReaderPlus.aiChatStream(payload, {

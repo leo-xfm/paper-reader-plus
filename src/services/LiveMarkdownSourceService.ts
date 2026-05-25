@@ -68,6 +68,7 @@ const MARKDOWN_CODE_LIGATURES = [
   ["!=", "≠"],
   [">=", "≥"],
   ["<=", "≤"],
+  ["+-", "±"],
 ] as const;
 const CALLOUT_PATTERN = /^\s{0,3}>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s*(.*))?$/i;
 const INLINE_COLOR_PATTERN = /<span\s+style=(["'])color:\s*(#[0-9a-f]{6}|black|red|green|blue|purple)\s*;?\1>([^\n]*?\S[^\n]*?)<\/span>/gi;

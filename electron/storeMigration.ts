@@ -246,6 +246,8 @@ const MARKDOWN_CHINESE_FONT_FAMILIES = ["current", "仿宋", "宋体", "黑体",
 
 function cleanSettings(value: unknown) {
   const settings = isRecord(value) ? { ...value } : {};
+  delete settings.agent_provider;
+  const aiMaxOutputTokens = cleanNumber(settings.ai_max_output_tokens, 16000);
   const figureLimit = cleanNumber(settings.summary_figure_attachment_limit, 10);
   const textLimit = cleanNumber(settings.summary_text_char_limit, 120000);
   const captureScale = cleanNumber(settings.capture_image_scale, 2);
@@ -258,6 +260,7 @@ function cleanSettings(value: unknown) {
   const markdownChineseFontFamily = typeof settings.markdown_chinese_font_family === "string" ? settings.markdown_chinese_font_family.trim() : "";
   const markdownCodeFontFamily = typeof settings.markdown_code_font_family === "string" ? settings.markdown_code_font_family.trim() : "";
   const markdownHighlightColor = typeof settings.markdown_highlight_color === "string" ? settings.markdown_highlight_color.trim() : "";
+  settings.ai_max_output_tokens = Math.min(65536, Math.max(0, Math.trunc(aiMaxOutputTokens)));
   settings.summary_figure_attachment_limit = Math.min(20, Math.max(0, Math.trunc(figureLimit)));
   settings.summary_text_char_limit = Math.min(2000000, Math.max(0, Math.trunc(textLimit)));
   settings.capture_image_scale = Math.min(6, Math.max(1, Math.round(captureScale * 10) / 10));
@@ -294,6 +297,10 @@ function cleanSettings(value: unknown) {
   settings.markdown_highlight_color = /^#[0-9a-f]{6}$/i.test(markdownHighlightColor) ? markdownHighlightColor : "#fff3bf";
   settings.markdown_math_enabled = settings.markdown_math_enabled !== false;
   settings.markdown_html_live_enabled = settings.markdown_html_live_enabled !== false;
+  settings.markdown_live_list_folding_enabled = settings.markdown_live_list_folding_enabled !== false;
+  settings.pdf_paragraph_actions_enabled = settings.pdf_paragraph_actions_enabled !== false;
+  settings.pdf_author_graph_enabled = settings.pdf_author_graph_enabled !== false;
+  settings.pdf_internal_link_preview_enabled = settings.pdf_internal_link_preview_enabled !== false;
   if (settings.markdown_default_editor_mode !== "edit" && settings.markdown_default_editor_mode !== "preview") {
     settings.markdown_default_editor_mode = "live";
   }

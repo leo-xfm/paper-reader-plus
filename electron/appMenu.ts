@@ -29,6 +29,7 @@ export type MenuAction =
   | "toggle-search"
   | "toggle-outline"
   | "settings-general"
+  | "settings-pdf"
   | "settings-markdown"
   | "settings-agent-api"
   | "settings-ocr-api"
@@ -103,6 +104,7 @@ export function createApplicationMenu(
       label: label("settings"),
       submenu: [
         { label: label("general"), accelerator: "CmdOrCtrl+,", click: () => sendMenuAction("settings-general") },
+        { label: label("pdf"), click: () => sendMenuAction("settings-pdf") },
         { label: label("markdown"), click: () => sendMenuAction("settings-markdown") },
         { label: label("fileAssociations"), click: () => sendMenuAction("settings-file-associations") },
         { type: "separator" },

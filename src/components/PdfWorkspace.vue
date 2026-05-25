@@ -8,6 +8,7 @@ import {
   Highlighter,
   Languages,
   ListChecks,
+  MoreHorizontal,
   MousePointer2,
   PictureInPicture,
   Quote,
@@ -23,6 +24,7 @@ import DictionaryPreview from "@/components/DictionaryPreview.vue";
 import ColorDropdown from "@/components/ColorDropdown.vue";
 import PdfPage from "@/components/PdfPage.vue";
 import PdfReferencePreview from "@/components/PdfReferencePreview.vue";
+import { useDropdownPopover } from "@/composables/useDropdownPopover";
 import { useI18n } from "@/i18n";
 import type { AnnotationToolMode } from "@/services/ReaderAnnotationService";
 import type { PdfLinkReturnTarget } from "@/composables/usePdfPreviewActions";
@@ -62,6 +64,9 @@ const props = withDefaults(defineProps<{
   dictionaryEntries: DictionaryEntry[];
   dictionaryPreview: DictionaryHoverPreview | null;
   captureImageScale?: number;
+  pdfParagraphActionsEnabled?: boolean;
+  pdfAuthorGraphEnabled?: boolean;
+  pdfInternalLinkPreviewEnabled?: boolean;
   canRename?: boolean;
   canOpenAnnotations?: boolean;
   canTranslate?: boolean;
@@ -75,6 +80,9 @@ const props = withDefaults(defineProps<{
   canAskAi: true,
   canCurrentPagePreview: true,
   canDeleteDocument: true,
+  pdfParagraphActionsEnabled: true,
+  pdfAuthorGraphEnabled: true,
+  pdfInternalLinkPreviewEnabled: true,
 });
 
 const { t } = useI18n();
@@ -134,6 +142,14 @@ const emit = defineEmits<{
 
 const scrollRef = ref<HTMLElement | null>(null);
 const searchInputRef = ref<HTMLInputElement | null>(null);
+const {
+  open: pdfMoreToolsOpen,
+  rootRef: pdfMoreToolsRoot,
+  triggerRef: pdfMoreToolsTrigger,
+  menuStyle: pdfMoreToolsStyle,
+  closeMenu: closePdfMoreTools,
+  toggleOpen: togglePdfMoreTools,
+} = useDropdownPopover(".pdf-more-tools-menu, .color-dropdown-menu", { offset: 7, align: "right" });
 
 function publishScrollElement() {
   emit("scrollElement", scrollRef.value);
@@ -152,12 +168,18 @@ function handleSearchEnter(event: KeyboardEvent) {
   else emit("nextSearch");
 }
 
+function runPdfMoreTool(action: () => void) {
+  closePdfMoreTools();
+  action();
+}
+
 onMounted(() => {
   void nextTick(publishScrollElement);
   focusSearchInput();
 });
 
 onBeforeUnmount(() => {
+  closePdfMoreTools();
   emit("scrollElement", null);
 });
 
@@ -186,15 +208,15 @@ watch(() => props.searchOpen, focusSearchInput);
             <button type="button" :title="t('pdf.zoomOut')" @click="emit('zoom', -1)"><ZoomOut :size="17" /></button>
             <span class="zoom-label">{{ Math.round(pdfZoom * 100) }}%</span>
             <button type="button" :title="t('pdf.zoomIn')" @click="emit('zoom', 1)"><ZoomIn :size="17" /></button>
-            <button type="button" :title="t('pdf.resetZoom')" @click="emit('resetZoom')"><RefreshCcw :size="16" /></button>
-            <button type="button" :title="t('pdf.undoAnnotation')" @click="emit('undo')"><History :size="17" /></button>
+            <button type="button" class="pdf-toolbar-reset-zoom" :title="t('pdf.resetZoom')" @click="emit('resetZoom')"><RefreshCcw :size="16" /></button>
+            <button type="button" class="pdf-toolbar-undo" :title="t('pdf.undoAnnotation')" @click="emit('undo')"><History :size="17" /></button>
           </div>
         </div>
         <div class="toolbar-zone toolbar-zone-center">
           <div class="toolbar-group">
             <button type="button" :title="t('pdf.selectText')" :class="{ active: annotationToolMode === 'select' }" @click="emit('update:annotationToolMode', 'select')"><MousePointer2 :size="17" /></button>
-            <button type="button" :title="t('annotation.type.highlight')" :class="{ active: annotationToolMode === 'highlight' }" @click="emit('update:annotationToolMode', 'highlight')"><Highlighter :size="17" /></button>
-            <button type="button" :title="t('annotation.type.underline')" :class="{ active: annotationToolMode === 'underline' }" @click="emit('update:annotationToolMode', 'underline')"><Underline :size="17" /></button>
+            <button type="button" class="pdf-toolbar-highlight" :title="t('annotation.type.highlight')" :class="{ active: annotationToolMode === 'highlight' }" @click="emit('update:annotationToolMode', 'highlight')"><Highlighter :size="17" /></button>
+            <button type="button" class="pdf-toolbar-underline" :title="t('annotation.type.underline')" :class="{ active: annotationToolMode === 'underline' }" @click="emit('update:annotationToolMode', 'underline')"><Underline :size="17" /></button>
             <button v-if="canOpenAnnotations !== false" type="button" :title="t('pdf.openAnnotations')" @click="emit('showAnnotations')"><ListChecks :size="17" /></button>
             <ColorDropdown class="pdf-toolbar-annotation-color" :model-value="annotationColor" :title="t('annotation.color')" @update:model-value="emit('update:annotationColor', $event)" />
             <button type="button" class="pdf-toolbar-quote" :title="t('pdf.copyQuote')" :disabled="!hasSelection" @click="emit('quote')"><Quote :size="17" /></button>
@@ -204,13 +226,35 @@ watch(() => props.searchOpen, focusSearchInput);
         </div>
         <div class="toolbar-zone toolbar-zone-right">
           <div class="toolbar-group">
-            <button type="button" :title="t('pdf.search')" :class="{ active: searchOpen }" @click="emit('toggleSearch')"><Search :size="17" /></button>
+            <button type="button" class="pdf-toolbar-search" :title="t('pdf.search')" :class="{ active: searchOpen }" @click="emit('toggleSearch')"><Search :size="17" /></button>
             <button type="button" class="pdf-toolbar-float-window" :title="t('pdf.currentPagePreview')" :disabled="canCurrentPagePreview === false" @click="emit('openCurrentPagePreview')"><PictureInPicture :size="17" /></button>
             <button type="button" class="pdf-toolbar-delete" :title="t('pdf.deleteDocument')" :disabled="canDeleteDocument === false" @click="emit('deleteDocument')"><Trash2 :size="17" /></button>
+            <div ref="pdfMoreToolsRoot" class="pdf-more-tools">
+              <button ref="pdfMoreToolsTrigger" type="button" class="pdf-more-tools-trigger" :class="{ active: pdfMoreToolsOpen }" :title="t('pdf.moreTools')" @click="togglePdfMoreTools"><MoreHorizontal :size="17" /></button>
+            </div>
           </div>
         </div>
       </div>
     </header>
+    <Teleport to="body">
+      <div v-if="pdfMoreToolsOpen" class="pdf-more-tools-menu pdf-more-tools-floating" :style="pdfMoreToolsStyle">
+        <button type="button" :title="t('pdf.resetZoom')" @click="runPdfMoreTool(() => emit('resetZoom'))"><RefreshCcw :size="17" /><span>{{ t("pdf.resetZoom") }}</span></button>
+        <button type="button" :title="t('pdf.undoAnnotation')" @click="runPdfMoreTool(() => emit('undo'))"><History :size="17" /><span>{{ t("pdf.undoAnnotation") }}</span></button>
+        <div class="pdf-more-tools-separator" />
+        <ColorDropdown class="pdf-more-tools-color" :model-value="annotationColor" :title="t('annotation.color')" @update:model-value="emit('update:annotationColor', $event)" />
+        <button type="button" :title="t('annotation.type.highlight')" :class="{ active: annotationToolMode === 'highlight' }" @click="runPdfMoreTool(() => emit('update:annotationToolMode', 'highlight'))"><Highlighter :size="17" /><span>{{ t("annotation.type.highlight") }}</span></button>
+        <button type="button" :title="t('annotation.type.underline')" :class="{ active: annotationToolMode === 'underline' }" @click="runPdfMoreTool(() => emit('update:annotationToolMode', 'underline'))"><Underline :size="17" /><span>{{ t("annotation.type.underline") }}</span></button>
+        <button type="button" :title="t('pdf.copyQuote')" :disabled="!hasSelection" @click="runPdfMoreTool(() => emit('quote'))"><Quote :size="17" /><span>{{ t("pdf.copyQuote") }}</span></button>
+        <div class="pdf-more-tools-separator" />
+        <button type="button" :title="t('pdf.translateSelection')" :disabled="!hasSelection || canTranslate === false" @click="runPdfMoreTool(() => emit('translate'))"><Languages :size="17" /><span>{{ t("pdf.translateSelection") }}</span></button>
+        <button type="button" :title="t('pdf.askAiSelection')" :disabled="!hasSelection || canAskAi === false" @click="runPdfMoreTool(() => emit('askAi'))"><Bot :size="17" /><span>{{ t("pdf.askAiSelection") }}</span></button>
+        <div class="pdf-more-tools-separator" />
+        <button type="button" :title="t('pdf.search')" :class="{ active: searchOpen }" @click="runPdfMoreTool(() => emit('toggleSearch'))"><Search :size="17" /><span>{{ t("pdf.search") }}</span></button>
+        <button type="button" :title="t('pdf.currentPagePreview')" :disabled="canCurrentPagePreview === false" @click="runPdfMoreTool(() => emit('openCurrentPagePreview'))"><PictureInPicture :size="17" /><span>{{ t("pdf.currentPagePreview") }}</span></button>
+        <div class="pdf-more-tools-separator" />
+        <button type="button" class="danger" :title="t('pdf.deleteDocument')" :disabled="canDeleteDocument === false" @click="runPdfMoreTool(() => emit('deleteDocument'))"><Trash2 :size="17" /><span>{{ t("pdf.deleteDocument") }}</span></button>
+      </div>
+    </Teleport>
 
     <div v-if="searchOpen" class="popover search-popover">
       <input
@@ -246,6 +290,9 @@ watch(() => props.searchOpen, focusSearchInput);
         :author-profiles="authorProfiles"
         :dictionary-entries="dictionaryEntries"
         :capture-image-scale="captureImageScale"
+        :pdf-paragraph-actions-enabled="pdfParagraphActionsEnabled !== false"
+        :pdf-author-graph-enabled="pdfAuthorGraphEnabled !== false"
+        :pdf-internal-link-preview-enabled="pdfInternalLinkPreviewEnabled !== false"
         :can-translate="canTranslate !== false"
         :can-ask-ai="canAskAi !== false"
         @selection="emit('selection', $event)"
@@ -268,6 +315,7 @@ watch(() => props.searchOpen, focusSearchInput);
       <p v-if="error" class="error pdf-error">{{ error }}</p>
     </section>
     <PdfReferencePreview
+      v-if="pdfInternalLinkPreviewEnabled !== false"
       :preview="referencePreview"
       :total-pages="totalPages"
       :fixed="referencePreviewFixed"
@@ -284,6 +332,7 @@ watch(() => props.searchOpen, focusSearchInput);
       @open-spreadsheet="emit('openReferenceSpreadsheet')"
     />
     <AuthorNetworkPreview
+      v-if="pdfAuthorGraphEnabled !== false"
       :preview="authorPreview"
       @clear="emit('clearAuthorHover')"
       @open-document="emit('openAuthorDocument', $event)"

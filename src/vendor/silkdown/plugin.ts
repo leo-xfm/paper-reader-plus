@@ -11,7 +11,7 @@ import { syntaxTree } from "@codemirror/language";
 import { decorateInline } from "./decorate/inline.js";
 import { decorateHeading } from "./decorate/heading.js";
 import { decorateBlockquote } from "./decorate/blockquote.js";
-import { decorateListItem } from "./decorate/list.js";
+import { decorateListItem, listItemFoldInfo } from "./decorate/list.js";
 import {
   buildLinkReferences,
   decorateAutolink,
@@ -32,6 +32,7 @@ import { decorateComplexTables } from "./decorate/complexTable.js";
 import { decorateBlockMath, decorateMath } from "./decorate/math.js";
 import { decorateUnderline } from "./decorate/underline.js";
 import { decorateTable, decorateTablesInRange } from "./decorate/table.js";
+import { HIDE } from "./decorate/shared.js";
 import type { UrlPolicy } from "./url.js";
 
 export interface SilkdownPluginOptions {
@@ -47,6 +48,7 @@ export interface SilkdownPluginOptions {
   highlightEnabled?: boolean;
   mathEnabled?: boolean;
   htmlBlockLiveEnabled?: boolean;
+  listFoldingEnabled?: boolean;
   liveBlockLabels?: {
     mathFormula?: string;
     emptyMathBlock?: string;
@@ -188,6 +190,32 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
       EditorView.atomicRanges.of((view) => view.state.field(field, false) ?? Decoration.none),
     ],
   });
+  const listFoldField = StateField.define<DecorationSet>({
+    create(state) {
+      if (disabled.has("ListItem") || opts.listFoldingEnabled === false) return Decoration.none;
+      return buildListFoldDecorations(state);
+    },
+    update(value, transaction) {
+      if (disabled.has("ListItem") || opts.listFoldingEnabled === false) return Decoration.none;
+      if (!transaction.docChanged) return value.map(transaction.changes);
+      return buildListFoldDecorations(transaction.state);
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  });
+
+  function buildListFoldDecorations(state: EditorState): DecorationSet {
+    const ranges: Range<Decoration>[] = [];
+    const tree = syntaxTree(state);
+    const doc = state.doc;
+    tree.iterate({
+      enter: (n) => {
+        if (n.name !== "ListItem") return;
+        const foldInfo = listItemFoldInfo(n.node, doc, true);
+        if (foldInfo?.collapsed) ranges.push(HIDE.range(foldInfo.hiddenFrom, foldInfo.hiddenTo));
+      },
+    });
+    return Decoration.set(ranges, true);
+  }
 
   interface BuildOutput {
     decorations: DecorationSet;
@@ -238,6 +266,20 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
         const codeLineNumbers = opts.codeLineNumbers !== false;
         const highlightEnabled = opts.highlightEnabled !== false;
         const mathEnabled = opts.mathEnabled !== false;
+        const listFoldingEnabled = opts.listFoldingEnabled !== false;
+        const collapsedListRanges: Array<{ from: number; to: number }> = [];
+
+        if (listFoldingEnabled && !disabled.has("ListItem")) {
+          tree.iterate({
+            enter: (n) => {
+              if (n.name !== "ListItem") return;
+              const foldInfo = listItemFoldInfo(n.node, doc, true);
+              if (foldInfo?.collapsed) collapsedListRanges.push({ from: foldInfo.hiddenFrom, to: foldInfo.hiddenTo });
+            },
+          });
+        }
+        const isHiddenByCollapsedList = (from: number, to: number) =>
+          collapsedListRanges.some((range) => from >= range.from && to <= range.to);
 
         for (const { from, to } of view.visibleRanges) {
           if (mathEnabled && !disabled.has("Math")) {
@@ -259,6 +301,7 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
             from,
             to,
             enter: (n) => {
+              if (isHiddenByCollapsedList(n.from, n.to)) return false;
               if (disabled.has(n.name)) return false;
 
               if (HEADING_NODES.has(n.name)) {
@@ -281,7 +324,7 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
               }
 
               if (n.name === "ListItem") {
-                decorateListItem(ranges, atomicRanges, n.node, doc, sel);
+                decorateListItem(ranges, atomicRanges, n.node, doc, sel, { listFoldingEnabled });
               }
 
               if (n.name === "Link") {
@@ -353,5 +396,5 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
       ],
     },
   );
-  return [compositionField, htmlBlockField, tableField, blockMathField, silkdownViewPlugin];
+  return [compositionField, htmlBlockField, tableField, blockMathField, listFoldField, silkdownViewPlugin];
 }

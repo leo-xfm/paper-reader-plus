@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n";
 import { markdownChineseFontOptions, markdownCodeFontOptions, markdownWesternFontOptions } from "@/services/MarkdownFontOptionsService";
 import type { FileAssociationExtension, FileAssociationStatus, PromptTemplateStatus, Settings } from "@/types";
 
-export type SettingsPanel = "general" | "markdown" | "agent-api" | "ocr-api" | "translation-api" | "file-associations" | "system-prompt" | "summary-prompt";
+export type SettingsPanel = "general" | "pdf" | "markdown" | "agent-api" | "ocr-api" | "translation-api" | "file-associations" | "system-prompt" | "summary-prompt";
 
 defineProps<{
   panel: SettingsPanel;
@@ -35,7 +35,7 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
 </script>
 
 <template>
-  <div class="modal-backdrop">
+  <div class="modal-backdrop" @mousedown.self="emit('close')">
     <section v-if="panel === 'general'" class="modal settings-modal">
       <header class="settings-modal-header">
         <h2>{{ t("settings.general") }}</h2>
@@ -73,6 +73,35 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
           <small>{{ t("settings.proxyUrlDescription") }}</small>
           <input v-model="settings.network_proxy_url" placeholder="http://127.0.0.1:8888" />
         </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
+      </div>
+    </section>
+
+    <section v-else-if="panel === 'pdf'" class="modal settings-modal">
+      <header class="settings-modal-header">
+        <h2>{{ t("settings.pdf") }}</h2>
+        <p class="modal-meta">{{ t("settings.pdfDescription") }}</p>
+      </header>
+      <div class="settings-general-list">
+        <div class="settings-general-section settings-general-section-first">
+          <h3>{{ t("settings.pdfInteraction") }}</h3>
+          <small>{{ t("settings.pdfInteractionDescription") }}</small>
+          <label class="settings-checkbox">
+            <input v-model="settings.pdf_paragraph_actions_enabled" type="checkbox" />
+            <span>{{ t("settings.pdfParagraphActions") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.pdf_author_graph_enabled" type="checkbox" />
+            <span>{{ t("settings.pdfAuthorGraph") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.pdf_internal_link_preview_enabled" type="checkbox" />
+            <span>{{ t("settings.pdfInternalLinkPreview") }}</span>
+          </label>
+        </div>
       </div>
       <div class="modal-actions">
         <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
@@ -176,15 +205,18 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
             <input v-model="settings.markdown_code_ligatures" type="checkbox" />
             <span>{{ t("settings.markdownCodeLigatures") }}</span>
           </label>
-          <label class="settings-checkbox">
-            <input v-model="settings.markdown_highlight_enabled" type="checkbox" />
-            <span>{{ t("settings.markdownHighlightSyntax") }}</span>
-          </label>
-          <label class="settings-color-row">
-            <span>{{ t("settings.markdownHighlightColor") }}</span>
-            <input v-model="settings.markdown_highlight_color" type="color" />
-            <input v-model="settings.markdown_highlight_color" pattern="#[0-9a-fA-F]{6}" placeholder="#fff3bf" />
-          </label>
+          <small class="settings-detail-line">{{ t("settings.markdownCodeLigaturesDescription") }}</small>
+          <div class="settings-two-column-row">
+            <label class="settings-checkbox">
+              <input v-model="settings.markdown_highlight_enabled" type="checkbox" />
+              <span>{{ t("settings.markdownHighlightSyntax") }}</span>
+            </label>
+            <label class="settings-color-row">
+              <span>{{ t("settings.markdownHighlightColor") }}</span>
+              <input v-model="settings.markdown_highlight_color" type="color" />
+              <input v-model="settings.markdown_highlight_color" pattern="#[0-9a-fA-F]{6}" placeholder="#fff3bf" />
+            </label>
+          </div>
           <label class="settings-checkbox">
             <input v-model="settings.markdown_math_enabled" type="checkbox" />
             <span>{{ t("settings.markdownMathRendering") }}</span>
@@ -192,6 +224,10 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
           <label class="settings-checkbox">
             <input v-model="settings.markdown_html_live_enabled" type="checkbox" />
             <span>{{ t("settings.markdownHtmlLiveRendering") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input v-model="settings.markdown_live_list_folding_enabled" type="checkbox" />
+            <span>{{ t("settings.markdownLiveListFolding") }}</span>
           </label>
         </div>
         <label class="settings-general-item">
@@ -238,15 +274,15 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
       </header>
       <div class="settings-grid">
         <label>
-          {{ t("settings.provider") }}
-          <UiDropdown v-model="settings.agent_provider" :title="t('settings.provider')" :options="[{ value: 'volcengine', label: 'Volcengine Ark' }]" />
-        </label>
-        <label>
           {{ t("settings.apiType") }}
           <UiDropdown v-model="settings.agent_api_type" :title="t('settings.apiType')" :options="[{ value: 'chat', label: 'Chat completions' }]" />
         </label>
         <label>{{ t("settings.baseUrl") }}<input v-model="settings.ai_base_url" /></label>
         <label>{{ t("settings.model") }}<input v-model="settings.ai_model" /></label>
+        <label>
+          {{ t("settings.aiMaxOutputTokens") }}
+          <input v-model.number="settings.ai_max_output_tokens" type="number" min="0" max="65536" step="1024" />
+        </label>
         <label class="settings-grid-wide">{{ t("settings.apiKey") }}<input v-model="settings.ai_api_key" type="password" /></label>
       </div>
       <div class="settings-context-options">

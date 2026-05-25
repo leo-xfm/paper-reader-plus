@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { Text } from "@codemirror/state";
+import { parser, GFM } from "@lezer/markdown";
 import {
   continueListOnEnter,
   continueBlockquoteOnEnter,
@@ -30,6 +32,20 @@ import {
   parseLiveMarkdownSections,
 } from "@/services/LiveMarkdownSectionService";
 import { buildComplexTableGrid, calculateComplexTableSelectionRange, complexTableToMarkdown, parseComplexTableSource, serializeComplexTable } from "@/services/ComplexTableService";
+import { listItemFoldInfo } from "@/vendor/silkdown/decorate/list";
+
+function firstListItemFoldInfo(source: string, enabled = true) {
+  const doc = Text.of(source.split("\n"));
+  const tree = parser.configure([GFM]).parse(source);
+  let info: ReturnType<typeof listItemFoldInfo> = null;
+  tree.iterate({
+    enter(node) {
+      if (node.name !== "ListItem" || info) return;
+      info = listItemFoldInfo(node.node, doc, enabled);
+    },
+  });
+  return info;
+}
 
 describe("LiveMarkdownEditor", () => {
   it("builds a virtual grid for complex tables with merged cells", () => {
@@ -140,6 +156,16 @@ describe("LiveMarkdownEditor", () => {
     expect(toggleListPrefix("", { start: 0, end: 0 }, false).value).toBe("+ ");
     expect(toggleListPrefix("+ item", { start: 0, end: 6 }, false).value).toBe("item");
     expect(toggleListPrefix("1. item", { start: 0, end: 7 }, true).value).toBe("item");
+  });
+
+  it("detects live list fold state from unordered markers", () => {
+    expect(firstListItemFoldInfo("+ parent\n    + child")?.collapsed).toBe(false);
+    expect(firstListItemFoldInfo("- parent\n    + child")?.collapsed).toBe(false);
+    expect(firstListItemFoldInfo("* parent\n    + child")?.collapsed).toBe(true);
+    expect(firstListItemFoldInfo("* parent")?.collapsed).toBeUndefined();
+    expect(firstListItemFoldInfo("1. parent\n    + child")?.collapsed).toBeUndefined();
+    expect(firstListItemFoldInfo("* [ ] parent\n    + child")?.collapsed).toBeUndefined();
+    expect(firstListItemFoldInfo("* parent\n    + child", false)?.collapsed).toBeUndefined();
   });
 
   it("sets selected block lines back to paragraph source", () => {

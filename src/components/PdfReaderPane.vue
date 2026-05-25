@@ -644,7 +644,7 @@ function handleKeydown(event: KeyboardEvent) {
 function handleGlobalPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null;
   if (!target) return;
-  if (target.closest(".annotation-comment-popover")) return;
+  if (target.closest(".annotation-comment-popover, .pdf-more-tools-menu, .color-dropdown-menu")) return;
   if (!target.closest(".readerm-pdf-pane")) {
     if (annotationCommentEditor.value) void saveAnnotationCommentEditor();
     selectionState.value = null;

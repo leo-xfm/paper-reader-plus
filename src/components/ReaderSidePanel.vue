@@ -11,7 +11,6 @@ import {
   Minus,
   Pencil,
   FunnelX,
-  ImagePlus,
   MapPin,
   PanelRightClose,
   RefreshCw,
@@ -328,17 +327,6 @@ function updateTags(annotation: Annotation, value: string) {
   });
 }
 
-async function requestInsertImage(target: "notes" | "summary") {
-  if (target === "notes" && props.notesMode === "preview") emit("update:notesMode", "live");
-  if (target === "summary" && props.summaryMode === "preview") emit("update:summaryMode", "live");
-  await nextTick();
-  const textarea = target === "notes" ? noteTextarea.value : summaryTextarea.value;
-  emit("insertImage", {
-    target,
-    selection: textarea ? { start: textarea.selectionStart, end: textarea.selectionEnd } : liveSelections.value[target],
-  });
-}
-
 function readPastedImage(event: ClipboardEvent) {
   const item = [...(event.clipboardData?.items || [])].find((entry) => entry.kind === "file" && entry.type.startsWith("image/"));
   const file = item?.getAsFile();
@@ -592,7 +580,6 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
     >
       <div class="mode-tabs">
         <SegmentedModeSwitch :model-value="notesMode" @update:model-value="emit('update:notesMode', $event)" />
-        <button type="button" :title="t('markdown.captureRegion')" @click="requestInsertImage('notes')"><ImagePlus :size="16" /></button>
         <button type="button" :title="t('markdown.saveNotes')" @click="emit('saveNote')"><Save :size="16" /></button>
       </div>
       <textarea
@@ -617,7 +604,6 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
     >
       <div class="mode-tabs">
         <SegmentedModeSwitch :model-value="summaryMode" @update:model-value="emit('update:summaryMode', $event)" />
-        <button type="button" :title="t('markdown.captureRegion')" @click="requestInsertImage('summary')"><ImagePlus :size="16" /></button>
         <button type="button" :title="t('markdown.saveSummary')" @click="emit('saveSummary')"><Save :size="16" /></button>
       </div>
       <textarea

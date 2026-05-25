@@ -43,6 +43,7 @@ import {
   Wand2,
   Underline,
   Lightbulb,
+  MoreHorizontal,
   OctagonAlert,
   ShieldAlert,
   TriangleAlert,
@@ -56,6 +57,7 @@ import { languages } from "@codemirror/language-data";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { GFM } from "@lezer/markdown";
 import UiDropdown from "@/components/UiDropdown.vue";
+import { useDropdownPopover } from "@/composables/useDropdownPopover";
 import { createLruStringCache } from "@/composables/useLruStringCache";
 import { useI18n, type I18nKey } from "@/i18n";
 import { markdownHeadingIdFromLine } from "@/services/MarkdownOutlineService";
@@ -209,6 +211,39 @@ const mathPreview = ref({
 const activeMathBlock = ref<MathSourceRange | null>(null);
 const mathGroupOpen = ref<string | null>(null);
 const mathMenuPosition = ref({ top: 0, left: 0, width: 776, maxHeight: 560 });
+const moreToolsMenuSelector = ".live-more-tools-menu, .ui-dropdown-menu, .color-dropdown-menu";
+const {
+  open: liveMoreToolsOpen,
+  rootRef: liveMoreToolsRoot,
+  triggerRef: liveMoreToolsTrigger,
+  menuStyle: liveMoreToolsStyle,
+  closeMenu: closeLiveMoreTools,
+  toggleOpen: toggleLiveMoreTools,
+} = useDropdownPopover(moreToolsMenuSelector, { offset: 6, align: "right" });
+const {
+  open: liveInsertMoreToolsOpen,
+  rootRef: liveInsertMoreToolsRoot,
+  triggerRef: liveInsertMoreToolsTrigger,
+  menuStyle: liveInsertMoreToolsStyle,
+  closeMenu: closeLiveInsertMoreTools,
+  toggleOpen: toggleLiveInsertMoreTools,
+} = useDropdownPopover(moreToolsMenuSelector, { offset: 6, align: "right" });
+const {
+  open: liveTableMoreToolsOpen,
+  rootRef: liveTableMoreToolsRoot,
+  triggerRef: liveTableMoreToolsTrigger,
+  menuStyle: liveTableMoreToolsStyle,
+  closeMenu: closeLiveTableMoreTools,
+  toggleOpen: toggleLiveTableMoreTools,
+} = useDropdownPopover(moreToolsMenuSelector, { offset: 6, align: "right" });
+const {
+  open: liveImageMoreToolsOpen,
+  rootRef: liveImageMoreToolsRoot,
+  triggerRef: liveImageMoreToolsTrigger,
+  menuStyle: liveImageMoreToolsStyle,
+  closeMenu: closeLiveImageMoreTools,
+  toggleOpen: toggleLiveImageMoreTools,
+} = useDropdownPopover(moreToolsMenuSelector, { offset: 6, align: "right" });
 const IMAGE_RESIZE_PERCENTAGES = [25, 50, 75, 100, 150, 200];
 const FONT_COLOR_OPTIONS = [
   { value: "black", labelKey: "color.black" as I18nKey, swatch: "#111827" },
@@ -959,6 +994,59 @@ function runSourceEdit(factory: (source: string, selection: SourceSelection) => 
   return dispatchEdit(edit);
 }
 
+function markdownIndentWidth(indent: string) {
+  return indent.replace(/\t/g, "    ").length;
+}
+
+function lineHasIndentedChild(lines: string[], index: number, indentWidth: number) {
+  for (let i = index + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const match = /^(\s*)/.exec(line);
+    const width = markdownIndentWidth(match?.[1] || "");
+    if (width <= indentWidth) return false;
+    return true;
+  }
+  return false;
+}
+
+function setAllLiveListFolds(source: string, selection: SourceSelection, collapsed: boolean): SourceEdit | null {
+  const lines = source.split("\n");
+  let changed = false;
+  const nextLines = lines.map((line, index) => {
+    const match = /^(\s*)([-+*])(\s+)(?!\[[ xX]\](?:\s|$))/.exec(line);
+    if (!match) return line;
+    const [, indent, marker, gap] = match;
+    if (collapsed ? marker === "*" : marker !== "*") return line;
+    if (!lineHasIndentedChild(lines, index, markdownIndentWidth(indent))) return line;
+    changed = true;
+    return `${indent}${collapsed ? "*" : "+"}${gap}${line.slice(match[0].length)}`;
+  });
+  if (!changed) return null;
+  const position = Math.min(selection.start, nextLines.join("\n").length);
+  return { value: nextLines.join("\n"), selection: { start: position, end: position } };
+}
+
+function expandAllLiveLists() {
+  return runSourceEdit((source, selection) => setAllLiveListFolds(source, selection, false));
+}
+
+function collapseAllLiveLists() {
+  return runSourceEdit((source, selection) => setAllLiveListFolds(source, selection, true));
+}
+
+function closeAllLiveMoreTools() {
+  closeLiveMoreTools();
+  closeLiveInsertMoreTools();
+  closeLiveTableMoreTools();
+  closeLiveImageMoreTools();
+}
+
+function runLiveMoreTool(action: () => unknown) {
+  closeAllLiveMoreTools();
+  action();
+}
+
 function setBlockStyle(value: string) {
   const level = value === "paragraph" ? 0 : Number(value.replace("h", ""));
   if (!Number.isInteger(level) || level < 0 || level > 6) return false;
@@ -1360,6 +1448,11 @@ function insertCallout(kind: "NOTE" | "TIP" | "IMPORTANT" | "WARNING" | "CAUTION
   runSourceEdit((source, selection) => insertCalloutBlock(source, selection, kind));
 }
 
+function insertCalloutFromMore(value: string) {
+  closeAllLiveMoreTools();
+  insertCallout(value as "NOTE" | "TIP" | "IMPORTANT" | "WARNING" | "CAUTION");
+}
+
 function requestImageInsertion() {
   flushModelUpdate();
   emit("selectionChange", selectionRange());
@@ -1376,10 +1469,7 @@ function setTableHover(rows: number, cols: number) {
   tableHover.value = { rows, cols };
 }
 
-function toggleTableMenu() {
-  tableMenuOpen.value = !tableMenuOpen.value;
-  if (!tableMenuOpen.value) return;
-  const rect = tableButtonRef.value?.getBoundingClientRect();
+function positionTableMenuFromRect(rect: DOMRect | null | undefined) {
   if (!rect) {
     tableMenuPosition.value = { top: 44, left: 12 };
     return;
@@ -1388,6 +1478,19 @@ function toggleTableMenu() {
     top: rect.bottom + 6,
     left: Math.min(Math.max(12, rect.right - 238), Math.max(12, window.innerWidth - 238)),
   };
+}
+
+function toggleTableMenu() {
+  tableMenuOpen.value = !tableMenuOpen.value;
+  if (!tableMenuOpen.value) return;
+  positionTableMenuFromRect(tableButtonRef.value?.getBoundingClientRect());
+}
+
+function openTableMenuFromMore(event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+  closeAllLiveMoreTools();
+  tableMenuOpen.value = true;
+  positionTableMenuFromRect(rect);
 }
 
 function insertTable(rows = tableHover.value.rows, cols = tableHover.value.cols) {
@@ -2054,6 +2157,7 @@ function deleteActiveImage() {
 function closeFloatingMenus() {
   tableMenuOpen.value = false;
   mathGroupOpen.value = null;
+  closeAllLiveMoreTools();
   clearActiveImage();
 }
 
@@ -2074,7 +2178,7 @@ function handleGlobalPointerDown(event: PointerEvent | MouseEvent) {
     suppressTableInteractionUntilTablePointer = false;
     return;
   }
-  if (target?.closest(".live-table-menu, .live-table-grid, .live-table-toolbar-row, .live-table-hover-insert, .live-image-toolbar, .live-image-resize-menu, .live-markdown-toolbar-row-math, .live-math-tool-popover")) return;
+  if (target?.closest(".live-table-menu, .live-table-grid, .live-table-toolbar-row, .live-table-hover-insert, .live-image-toolbar, .live-image-resize-menu, .live-markdown-toolbar-row-math, .live-math-tool-popover, .live-more-tools, .live-more-tools-menu, .ui-dropdown-menu, .color-dropdown-menu")) return;
   const imageAnchor = target?.closest(".sd-image-anchor") as HTMLElement | null;
   if (imageAnchor?.dataset.href) {
     event.preventDefault();
@@ -2888,6 +2992,7 @@ function createState(markdownSource: string) {
         highlightEnabled: props.settings?.markdown_highlight_enabled !== false,
         mathEnabled: props.settings?.markdown_math_enabled !== false,
         htmlBlockLiveEnabled: props.settings?.markdown_html_live_enabled !== false,
+        listFoldingEnabled: props.settings?.markdown_live_list_folding_enabled !== false,
         suppressSelectionReveal: shouldSuppressRenderedTextReveal,
         selectionRevealOverride: currentRenderedTextRevealSelection,
         liveBlockLabels: {
@@ -3345,6 +3450,7 @@ watch(
     props.settings?.markdown_highlight_enabled,
     props.settings?.markdown_math_enabled,
     props.settings?.markdown_html_live_enabled,
+    props.settings?.markdown_live_list_folding_enabled,
     language.value,
   ],
   () => {
@@ -3399,8 +3505,8 @@ watch(activeMathBlock, async () => {
       <button type="button" :class="{ active: activeMarks.strong }" :title="t('liveMarkdown.bold')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '**'))"><Bold :size="15" /></button>
       <button type="button" :class="{ active: activeMarks.em }" :title="t('liveMarkdown.italic')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '*'))"><Italic :size="15" /></button>
       <button type="button" :class="{ active: activeMarks.underline }" :title="t('liveMarkdown.underline')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '<u>', '</u>'))"><Underline :size="15" /></button>
-      <button type="button" :class="{ active: activeMarks.highlight }" :title="t('liveMarkdown.highlight')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '=='))"><Highlighter :size="15" /></button>
-      <button type="button" :class="{ active: activeMarks.strike }" :title="t('liveMarkdown.strikethrough')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '~~'))"><Strikethrough :size="15" /></button>
+      <button type="button" class="live-toolbar-highlight" :class="{ active: activeMarks.highlight }" :title="t('liveMarkdown.highlight')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '=='))"><Highlighter :size="15" /></button>
+      <button type="button" class="live-toolbar-strike" :class="{ active: activeMarks.strike }" :title="t('liveMarkdown.strikethrough')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '~~'))"><Strikethrough :size="15" /></button>
       <button
         v-for="option in FONT_COLOR_OPTIONS"
         :key="option.value"
@@ -3415,6 +3521,9 @@ watch(activeMathBlock, async () => {
       </button>
       <button type="button" class="live-toolbar-clear-format" :disabled="!hasSelection" :title="t('liveMarkdown.clearFormatting')" @click="runSourceEdit((source, selection) => clearMarkdownFormatting(source, selection))"><Wand2 :size="15" /></button>
       <button type="button" class="live-toolbar-inline-code" :class="{ active: activeMarks.code }" :title="t('liveMarkdown.inlineCode')" @click="runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '`'))"><Code :size="15" /></button>
+      <span v-if="settings?.markdown_live_list_folding_enabled !== false" class="live-toolbar-divider live-toolbar-list-fold-divider" />
+      <button v-if="settings?.markdown_live_list_folding_enabled !== false" type="button" class="live-toolbar-list-fold-all live-toolbar-expand-all" :title="t('liveMarkdown.expandAllLists')" @click="expandAllLiveLists"><ChevronsDown :size="15" /></button>
+      <button v-if="settings?.markdown_live_list_folding_enabled !== false" type="button" class="live-toolbar-list-fold-all live-toolbar-collapse-all" :title="t('liveMarkdown.collapseAllLists')" @click="collapseAllLiveLists"><ChevronsUp :size="15" /></button>
       <span class="live-toolbar-divider" />
       <UiDropdown
         class="live-block-dropdown"
@@ -3424,6 +3533,9 @@ watch(activeMathBlock, async () => {
         menu-class="live-block-dropdown-menu"
         @update:model-value="setBlockStyle"
       />
+      <div ref="liveMoreToolsRoot" class="live-more-tools live-more-tools-properties">
+        <button ref="liveMoreToolsTrigger" type="button" class="live-more-tools-trigger" :class="{ active: liveMoreToolsOpen }" :title="t('liveMarkdown.moreTools')" @click="toggleLiveMoreTools"><MoreHorizontal :size="16" /></button>
+      </div>
     </div>
     <div v-if="activeMathBlock" ref="mathToolbarRoot" class="live-markdown-toolbar-row live-markdown-toolbar-row-math" role="toolbar" :aria-label="t('liveMarkdown.mathToolbar')" @mousedown.prevent>
       <div v-for="group in MATH_TOOL_GROUPS" :key="group.key" class="live-math-tool-group">
@@ -3497,9 +3609,12 @@ watch(activeMathBlock, async () => {
       <span class="live-toolbar-divider" />
       <span class="live-table-toolbar-group live-table-toolbar-action-group">
         <button type="button" :title="t('liveMarkdown.copyTable')" @click="copyActiveTable"><Copy :size="15" /></button>
-        <button type="button" :disabled="activeTable.kind === 'complex'" :title="activeTable.kind === 'complex' ? t('liveMarkdown.formatMarkdownOnly') : t('liveMarkdown.formatTable')" @click="formatActiveTableSource"><Scan :size="15" /></button>
+        <button type="button" class="live-table-toolbar-format-button" :disabled="activeTable.kind === 'complex'" :title="activeTable.kind === 'complex' ? t('liveMarkdown.formatMarkdownOnly') : t('liveMarkdown.formatTable')" @click="formatActiveTableSource"><Scan :size="15" /></button>
         <button type="button" class="danger" :title="t('liveMarkdown.deleteTable')" @click="deleteActiveTable"><Trash2 :size="15" /></button>
       </span>
+      <div ref="liveTableMoreToolsRoot" class="live-more-tools live-table-more-tools">
+        <button ref="liveTableMoreToolsTrigger" type="button" class="live-more-tools-trigger" :class="{ active: liveTableMoreToolsOpen }" :title="t('liveMarkdown.moreTools')" @click="toggleLiveTableMoreTools"><MoreHorizontal :size="16" /></button>
+      </div>
     </div>
       <div v-if="!activeMathBlock && !activeTable.active && activeImage" class="live-markdown-toolbar-row live-markdown-toolbar-row-image live-image-toolbar" role="toolbar" :aria-label="t('liveMarkdown.imageToolbar')">
         <span class="live-markdown-toolbar-row-label live-image-toolbar-label">{{ t("liveMarkdown.image") }}</span>
@@ -3508,27 +3623,35 @@ watch(activeMathBlock, async () => {
           :key="percent"
           type="button"
           class="live-image-percent-button"
+          :class="percent === 25 || percent === 75 || percent === 150 ? 'live-image-percent-secondary' : 'live-image-percent-primary'"
           :title="t('liveMarkdown.resizeImagePercent', { percent })"
           @click="resizeActiveImage(percent)"
         >
           {{ percent }}
         </button>
         <span class="live-toolbar-divider" />
-        <button type="button" :class="{ active: activeImage?.image.alignment === 'left' }" :title="t('liveMarkdown.alignLeft')" @click="setActiveImageAlignment('left')"><AlignLeft :size="15" /></button>
-        <button type="button" :class="{ active: activeImage?.image.alignment === 'center' }" :title="t('liveMarkdown.alignCenter')" @click="setActiveImageAlignment('center')"><AlignCenter :size="15" /></button>
-        <button type="button" :class="{ active: activeImage?.image.alignment === 'right' }" :title="t('liveMarkdown.alignRight')" @click="setActiveImageAlignment('right')"><AlignRight :size="15" /></button>
-        <span class="live-toolbar-divider" />
-        <button v-if="activeImage?.readerHref" type="button" :title="t('liveMarkdown.jumpToSource')" @click="jumpToActiveImageSource"><ArrowRightToLine :size="15" /></button>
-        <button type="button" :title="t('liveMarkdown.saveImageAs')" @click="saveActiveImageAs"><Copy :size="15" /></button>
-        <button type="button" class="danger" :title="t('common.delete')" @click="deleteActiveImage"><Trash2 :size="15" /></button>
+        <button type="button" class="live-image-align-button" :class="{ active: activeImage?.image.alignment === 'left' }" :title="t('liveMarkdown.alignLeft')" @click="setActiveImageAlignment('left')"><AlignLeft :size="15" /></button>
+        <button type="button" class="live-image-align-button" :class="{ active: activeImage?.image.alignment === 'center' }" :title="t('liveMarkdown.alignCenter')" @click="setActiveImageAlignment('center')"><AlignCenter :size="15" /></button>
+        <button type="button" class="live-image-align-button" :class="{ active: activeImage?.image.alignment === 'right' }" :title="t('liveMarkdown.alignRight')" @click="setActiveImageAlignment('right')"><AlignRight :size="15" /></button>
+        <span class="live-toolbar-divider live-image-percent-divider" />
+        <button v-if="activeImage?.readerHref" type="button" class="live-image-source-button" :title="t('liveMarkdown.jumpToSource')" @click="jumpToActiveImageSource"><ArrowRightToLine :size="15" /></button>
+        <button type="button" class="live-image-save-button" :title="t('liveMarkdown.saveImageAs')" @click="saveActiveImageAs"><Copy :size="15" /></button>
+        <button type="button" class="danger live-image-delete-button" :title="t('common.delete')" @click="deleteActiveImage"><Trash2 :size="15" /></button>
+        <div ref="liveImageMoreToolsRoot" class="live-more-tools live-image-more-tools">
+          <button ref="liveImageMoreToolsTrigger" type="button" class="live-more-tools-trigger" :class="{ active: liveImageMoreToolsOpen }" :title="t('liveMarkdown.moreTools')" @click="toggleLiveImageMoreTools"><MoreHorizontal :size="16" /></button>
+        </div>
       </div>
     <div v-if="!activeMathBlock && !activeTable.active && !activeImage" class="live-markdown-toolbar-row live-markdown-toolbar-row-insert" role="toolbar" :aria-label="t('liveMarkdown.insert')">
       <span class="live-markdown-toolbar-row-label">{{ t("liveMarkdown.insert") }}</span>
-      <button type="button" class="live-toolbar-list" :class="{ active: activeBlocks.bulletList }" :title="t('liveMarkdown.bulletList')" @click="runSourceEdit((source, selection) => toggleListPrefix(source, selection, false))"><List :size="15" /></button>
-      <button type="button" class="live-toolbar-list" :class="{ active: activeBlocks.orderedList }" :title="t('liveMarkdown.orderedList')" @click="runSourceEdit((source, selection) => toggleListPrefix(source, selection, true))"><ListOrdered :size="15" /></button>
-      <span class="live-toolbar-divider" />
-      <button type="button" :title="t('liveMarkdown.mathFormula')" @click="insertMathFormula"><Sigma :size="15" /></button>
-      <button type="button" :title="t('liveMarkdown.mathBlock')" @click="insertMathBlockFormula"><SquareCode :size="15" /></button>
+      <div class="live-insert-list-group">
+        <button type="button" class="live-toolbar-list" :class="{ active: activeBlocks.bulletList }" :title="t('liveMarkdown.bulletList')" @click="runSourceEdit((source, selection) => toggleListPrefix(source, selection, false))"><List :size="15" /></button>
+        <button type="button" class="live-toolbar-list" :class="{ active: activeBlocks.orderedList }" :title="t('liveMarkdown.orderedList')" @click="runSourceEdit((source, selection) => toggleListPrefix(source, selection, true))"><ListOrdered :size="15" /></button>
+      </div>
+      <span class="live-toolbar-divider live-insert-list-divider" />
+      <div class="live-insert-math-group">
+        <button type="button" :title="t('liveMarkdown.mathFormula')" @click="insertMathFormula"><Sigma :size="15" /></button>
+        <button type="button" :title="t('liveMarkdown.mathBlock')" @click="insertMathBlockFormula"><SquareCode :size="15" /></button>
+      </div>
       <div class="live-table-menu">
         <button ref="tableButtonRef" type="button" :class="{ active: tableMenuOpen }" :title="t('liveMarkdown.table')" @click="toggleTableMenu"><Table2 :size="15" /></button>
       </div>
@@ -3541,11 +3664,131 @@ watch(activeMathBlock, async () => {
         @update:model-value="insertCallout($event as 'NOTE' | 'TIP' | 'IMPORTANT' | 'WARNING' | 'CAUTION')"
       />
       <div class="live-insert-toolbar-right">
-        <button type="button" :title="t('liveMarkdown.image')" @click="requestImageInsertion"><ImagePlus :size="15" /></button>
-        <button type="button" :title="t('liveMarkdown.formulaOcr')" @click="requestFormulaOcrInsertion"><Scan :size="15" /></button>
+        <button type="button" class="live-insert-image-button" :title="t('liveMarkdown.image')" @click="requestImageInsertion"><ImagePlus :size="15" /></button>
+        <button type="button" class="live-insert-formula-ocr-button" :title="t('liveMarkdown.formulaOcr')" @click="requestFormulaOcrInsertion"><Scan :size="15" /></button>
+      </div>
+      <div ref="liveInsertMoreToolsRoot" class="live-more-tools live-insert-more-tools">
+        <button ref="liveInsertMoreToolsTrigger" type="button" class="live-more-tools-trigger" :class="{ active: liveInsertMoreToolsOpen }" :title="t('liveMarkdown.moreTools')" @click="toggleLiveInsertMoreTools"><MoreHorizontal :size="16" /></button>
       </div>
     </div>
     </div>
+    <Teleport to="body">
+      <div v-if="liveMoreToolsOpen" class="live-more-tools-menu live-more-tools-floating" :style="liveMoreToolsStyle">
+        <UiDropdown
+          class="live-more-tools-dropdown"
+          :model-value="settings?.markdown_western_font_family || settings?.markdown_font_family || 'current'"
+          :title="t('settings.markdownWesternFontFamily')"
+          :options="markdownWesternFontOptions"
+          menu-class="live-markdown-font-dropdown-menu"
+          @update:model-value="updateMarkdownWesternFontFamily"
+        />
+        <UiDropdown
+          class="live-more-tools-dropdown"
+          :model-value="settings?.markdown_chinese_font_family || 'current'"
+          :title="t('settings.markdownChineseFontFamily')"
+          :options="markdownChineseFontOptions"
+          menu-class="live-markdown-font-dropdown-menu"
+          @update:model-value="updateMarkdownChineseFontFamily"
+        />
+        <UiDropdown
+          class="live-more-tools-dropdown"
+          :model-value="activeBlockStyle"
+          :title="t('liveMarkdown.paragraph')"
+          :options="blockStyleOptions"
+          menu-class="live-block-dropdown-menu"
+          @update:model-value="setBlockStyle"
+        />
+        <div class="live-more-tools-grid">
+          <button type="button" :class="{ active: activeMarks.strong }" :title="t('liveMarkdown.bold')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '**')))"><Bold :size="15" /></button>
+          <button type="button" :class="{ active: activeMarks.em }" :title="t('liveMarkdown.italic')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '*')))"><Italic :size="15" /></button>
+          <button type="button" :class="{ active: activeMarks.underline }" :title="t('liveMarkdown.underline')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '<u>', '</u>')))"><Underline :size="15" /></button>
+          <button type="button" :class="{ active: activeMarks.highlight }" :title="t('liveMarkdown.highlight')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '==')))"><Highlighter :size="15" /></button>
+          <button type="button" :class="{ active: activeMarks.strike }" :title="t('liveMarkdown.strikethrough')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '~~')))"><Strikethrough :size="15" /></button>
+          <button type="button" :disabled="!hasSelection" :title="t('liveMarkdown.clearFormatting')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => clearMarkdownFormatting(source, selection)))"><Wand2 :size="15" /></button>
+          <button type="button" :class="{ active: activeMarks.code }" :title="t('liveMarkdown.inlineCode')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleWrappedMarkdown(source, selection, '`')))"><Code :size="15" /></button>
+          <button v-if="settings?.markdown_live_list_folding_enabled !== false" type="button" :title="t('liveMarkdown.expandAllLists')" @click="runLiveMoreTool(expandAllLiveLists)"><ChevronsDown :size="15" /></button>
+          <button v-if="settings?.markdown_live_list_folding_enabled !== false" type="button" :title="t('liveMarkdown.collapseAllLists')" @click="runLiveMoreTool(collapseAllLiveLists)"><ChevronsUp :size="15" /></button>
+        </div>
+        <div class="live-more-tools-grid live-more-tools-colors">
+          <button
+            v-for="option in FONT_COLOR_OPTIONS"
+            :key="option.value"
+            type="button"
+            class="live-font-color-button"
+            :class="{ active: activeFontColor === option.value }"
+            :title="t('liveMarkdown.fontColor', { color: t(option.labelKey) })"
+            :style="{ '--live-font-color': option.swatch }"
+            @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleFontColor(source, selection, option.value)))"
+          >
+            <Type :size="15" />
+          </button>
+        </div>
+      </div>
+    </Teleport>
+    <Teleport to="body">
+      <div v-if="liveInsertMoreToolsOpen" class="live-more-tools-menu live-more-tools-floating live-insert-more-tools-menu" :style="liveInsertMoreToolsStyle">
+        <UiDropdown
+          class="live-more-tools-dropdown"
+          :model-value="calloutKind"
+          :title="t('liveMarkdown.callout')"
+          :options="calloutOptions"
+          menu-class="live-callout-dropdown-menu"
+          @update:model-value="insertCalloutFromMore"
+        />
+        <div class="live-more-tools-grid">
+          <button type="button" :class="{ active: activeBlocks.bulletList }" :title="t('liveMarkdown.bulletList')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleListPrefix(source, selection, false)))"><List :size="15" /></button>
+          <button type="button" :class="{ active: activeBlocks.orderedList }" :title="t('liveMarkdown.orderedList')" @click="runLiveMoreTool(() => runSourceEdit((source, selection) => toggleListPrefix(source, selection, true)))"><ListOrdered :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.mathFormula')" @click="runLiveMoreTool(insertMathFormula)"><Sigma :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.mathBlock')" @click="runLiveMoreTool(insertMathBlockFormula)"><SquareCode :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.table')" @click="openTableMenuFromMore"><Table2 :size="15" /></button>
+        </div>
+        <div class="live-more-tools-grid live-insert-media-tools">
+          <button type="button" :title="t('liveMarkdown.image')" @click="runLiveMoreTool(requestImageInsertion)"><ImagePlus :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.formulaOcr')" @click="runLiveMoreTool(requestFormulaOcrInsertion)"><Scan :size="15" /></button>
+        </div>
+      </div>
+    </Teleport>
+    <Teleport to="body">
+      <div v-if="liveTableMoreToolsOpen" class="live-more-tools-menu live-more-tools-floating live-table-more-tools-menu" :style="liveTableMoreToolsStyle">
+        <div class="live-more-tools-grid">
+          <button v-if="activeTable.kind === 'markdown'" type="button" :title="t('liveMarkdown.upgradeComplexTable')" @click="runLiveMoreTool(upgradeActiveTableToComplex)"><ChevronsUp :size="15" /></button>
+          <button v-if="activeTable.kind === 'complex'" type="button" :title="t('liveMarkdown.downgradeMarkdownTable')" @click="runLiveMoreTool(downgradeComplexTableToMarkdown)"><ChevronsDown :size="15" /></button>
+          <div class="live-more-tools-separator" />
+          <button type="button" :title="t('liveMarkdown.insertRowAbove')" @click="runLiveMoreTool(() => insertTableRow('above'))"><ArrowUpToLine :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.insertRowBelow')" @click="runLiveMoreTool(() => insertTableRow('below'))"><ArrowDownToLine :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.insertColumnLeft')" @click="runLiveMoreTool(() => insertTableColumn('left'))"><ArrowLeftToLine :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.insertColumnRight')" @click="runLiveMoreTool(() => insertTableColumn('right'))"><ArrowRightToLine :size="15" /></button>
+          <div class="live-more-tools-separator" />
+          <button type="button" :title="t('liveMarkdown.deleteRows')" @click="runLiveMoreTool(deleteTableRows)"><TableRowsSplit :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.deleteColumns')" @click="runLiveMoreTool(deleteTableColumns)"><TableColumnsSplit :size="15" /></button>
+          <div class="live-more-tools-separator" />
+          <button type="button" :class="{ active: activeTable.align === 'left' }" :title="t('liveMarkdown.alignLeft')" @click="runLiveMoreTool(() => setActiveColumnAlign('left'))"><AlignLeft :size="15" /></button>
+          <button type="button" :class="{ active: activeTable.align === 'center' }" :title="t('liveMarkdown.alignCenter')" @click="runLiveMoreTool(() => setActiveColumnAlign('center'))"><AlignCenter :size="15" /></button>
+          <button type="button" :class="{ active: activeTable.align === 'right' }" :title="t('liveMarkdown.alignRight')" @click="runLiveMoreTool(() => setActiveColumnAlign('right'))"><AlignRight :size="15" /></button>
+          <div v-if="activeTable.kind === 'complex'" class="live-more-tools-separator" />
+          <button v-if="activeTable.kind === 'complex'" type="button" :title="t('liveMarkdown.mergeCells')" @click="runLiveMoreTool(mergeComplexCells)"><TableCellsMerge :size="15" /></button>
+          <button v-if="activeTable.kind === 'complex'" type="button" :title="t('liveMarkdown.splitCell')" @click="runLiveMoreTool(splitComplexCell)"><TableCellsSplit :size="15" /></button>
+          <button v-if="activeTable.kind === 'complex'" type="button" :title="t('liveMarkdown.distributeColumns')" @click="runLiveMoreTool(distributeComplexColumns)"><AlignHorizontalSpaceBetween :size="15" /></button>
+          <div class="live-more-tools-separator" />
+          <button type="button" :title="t('liveMarkdown.copyTable')" @click="runLiveMoreTool(copyActiveTable)"><Copy :size="15" /></button>
+          <button type="button" :disabled="activeTable.kind === 'complex'" :title="activeTable.kind === 'complex' ? t('liveMarkdown.formatMarkdownOnly') : t('liveMarkdown.formatTable')" @click="runLiveMoreTool(formatActiveTableSource)"><Scan :size="15" /></button>
+          <button type="button" class="danger" :title="t('liveMarkdown.deleteTable')" @click="runLiveMoreTool(deleteActiveTable)"><Trash2 :size="15" /></button>
+        </div>
+      </div>
+    </Teleport>
+    <Teleport to="body">
+      <div v-if="liveImageMoreToolsOpen" class="live-more-tools-menu live-more-tools-floating live-image-more-tools-menu" :style="liveImageMoreToolsStyle">
+        <div class="live-more-tools-grid">
+          <button v-for="percent in IMAGE_RESIZE_PERCENTAGES" :key="percent" type="button" class="live-image-percent-button" :title="t('liveMarkdown.resizeImagePercent', { percent })" @click="runLiveMoreTool(() => resizeActiveImage(percent))">{{ percent }}</button>
+          <button type="button" :class="{ active: activeImage?.image.alignment === 'left' }" :title="t('liveMarkdown.alignLeft')" @click="runLiveMoreTool(() => setActiveImageAlignment('left'))"><AlignLeft :size="15" /></button>
+          <button type="button" :class="{ active: activeImage?.image.alignment === 'center' }" :title="t('liveMarkdown.alignCenter')" @click="runLiveMoreTool(() => setActiveImageAlignment('center'))"><AlignCenter :size="15" /></button>
+          <button type="button" :class="{ active: activeImage?.image.alignment === 'right' }" :title="t('liveMarkdown.alignRight')" @click="runLiveMoreTool(() => setActiveImageAlignment('right'))"><AlignRight :size="15" /></button>
+          <button v-if="activeImage?.readerHref" type="button" :title="t('liveMarkdown.jumpToSource')" @click="runLiveMoreTool(() => jumpToActiveImageSource($event))"><ArrowRightToLine :size="15" /></button>
+          <button type="button" :title="t('liveMarkdown.saveImageAs')" @click="runLiveMoreTool(saveActiveImageAs)"><Copy :size="15" /></button>
+          <button type="button" class="danger" :title="t('common.delete')" @click="runLiveMoreTool(deleteActiveImage)"><Trash2 :size="15" /></button>
+        </div>
+      </div>
+    </Teleport>
     <Teleport to="body">
       <div
         v-if="activeMathGroup"

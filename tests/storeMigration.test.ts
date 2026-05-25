@@ -47,8 +47,12 @@ describe("store migration", () => {
     expect("rects_pct" in migrated.annotations[0]).toBe(false);
     expect("text_quote" in migrated.annotations[0]).toBe(false);
     expect(migrated.paragraph_translations).toEqual({});
+    expect(migrated.settings.ai_max_output_tokens).toBe(16000);
     expect(migrated.settings.summary_figure_attachment_limit).toBe(10);
     expect(migrated.settings.summary_text_char_limit).toBe(120000);
+    expect(migrated.settings.pdf_paragraph_actions_enabled).toBe(true);
+    expect(migrated.settings.pdf_author_graph_enabled).toBe(true);
+    expect(migrated.settings.pdf_internal_link_preview_enabled).toBe(true);
     expect(migrated.settings.markdown_western_font_family).toBe("current");
     expect(migrated.settings.markdown_chinese_font_family).toBe("current");
     expect(migrated.settings.markdown_code_font_family).toBe("Consolas");
@@ -57,6 +61,7 @@ describe("store migration", () => {
     expect(migrated.settings.markdown_code_line_height).toBe(1.22);
     expect(migrated.settings.markdown_code_ligatures).toBe(true);
     expect(migrated.settings.markdown_html_live_enabled).toBe(true);
+    expect(migrated.settings.markdown_live_list_folding_enabled).toBe(true);
     expect(migrated.settings.markdown_default_editor_mode).toBe("live");
     expect(migrated.settings.simpletex_ocr_token).toBe("");
     expect(migrated.settings.simpletex_ocr_enabled).toBe(false);
@@ -96,6 +101,12 @@ describe("store migration", () => {
     expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "edit" } }).settings.markdown_default_editor_mode).toBe("edit");
     expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "preview" } }).settings.markdown_default_editor_mode).toBe("preview");
     expect(migrateStoreToV3({ settings: { markdown_default_editor_mode: "bad" } }).settings.markdown_default_editor_mode).toBe("live");
+  });
+
+  it("cleans live markdown list folding setting", () => {
+    expect(migrateStoreToV3({ settings: {} }).settings.markdown_live_list_folding_enabled).toBe(true);
+    expect(migrateStoreToV3({ settings: { markdown_live_list_folding_enabled: false } }).settings.markdown_live_list_folding_enabled).toBe(false);
+    expect(migrateStoreToV3({ settings: { markdown_live_list_folding_enabled: "bad" } }).settings.markdown_live_list_folding_enabled).toBe(true);
   });
 
   it("migrates and cleans document view states", () => {
@@ -175,7 +186,14 @@ describe("store migration", () => {
           updated_at: "2026-01-01T00:00:00.000Z",
         }],
       },
-      settings: { summary_figure_attachment_limit: 10, summary_text_char_limit: 120000 },
+      settings: {
+        ai_max_output_tokens: 16000,
+        summary_figure_attachment_limit: 10,
+        summary_text_char_limit: 120000,
+        pdf_paragraph_actions_enabled: true,
+        pdf_author_graph_enabled: true,
+        pdf_internal_link_preview_enabled: true,
+      },
     });
 
     expect(migrateStoreToV3(first)).toEqual(first);
@@ -191,6 +209,31 @@ describe("store migration", () => {
     expect(migrateStoreToV3({ settings: { summary_text_char_limit: 3000000 } }).settings.summary_text_char_limit).toBe(2000000);
     expect(migrateStoreToV3({ settings: { summary_text_char_limit: -3 } }).settings.summary_text_char_limit).toBe(0);
     expect(migrateStoreToV3({ settings: { summary_text_char_limit: "bad" } }).settings.summary_text_char_limit).toBe(120000);
+  });
+
+  it("clamps AI max output token settings", () => {
+    expect(migrateStoreToV3({ settings: { ai_max_output_tokens: 100000 } }).settings.ai_max_output_tokens).toBe(65536);
+    expect(migrateStoreToV3({ settings: { ai_max_output_tokens: -3 } }).settings.ai_max_output_tokens).toBe(0);
+    expect(migrateStoreToV3({ settings: { ai_max_output_tokens: "bad" } }).settings.ai_max_output_tokens).toBe(16000);
+  });
+
+  it("cleans PDF interaction settings", () => {
+    expect(migrateStoreToV3({ settings: {} }).settings).toMatchObject({
+      pdf_paragraph_actions_enabled: true,
+      pdf_author_graph_enabled: true,
+      pdf_internal_link_preview_enabled: true,
+    });
+    expect(migrateStoreToV3({
+      settings: {
+        pdf_paragraph_actions_enabled: false,
+        pdf_author_graph_enabled: false,
+        pdf_internal_link_preview_enabled: false,
+      },
+    }).settings).toMatchObject({
+      pdf_paragraph_actions_enabled: false,
+      pdf_author_graph_enabled: false,
+      pdf_internal_link_preview_enabled: false,
+    });
   });
 
   it("cleans paragraph translation cache entries", () => {

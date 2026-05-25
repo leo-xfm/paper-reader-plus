@@ -154,8 +154,13 @@ async function copyDocumentMarkdownLink(document: LibraryDocument) {
             @contextmenu.prevent.stop="emit('documentContextMenu', document)"
           >
             <button type="button" class="library-item-open" :title="document.title" @click="emit('openDocument', document.document_id)">
-              <span><i class="health-dot" :class="healthClass(document.document_id)" />{{ document.title }}</span>
-              <small>{{ document.file_name }}</small>
+              <span class="library-item-title">
+                <span class="library-item-title-text">{{ document.title }}</span>
+              </span>
+              <small class="library-item-file">
+                <i class="health-dot" :class="healthClass(document.document_id)" />
+                <span>{{ document.file_name }}</span>
+              </small>
             </button>
             <button
               type="button"

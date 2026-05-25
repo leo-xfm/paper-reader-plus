@@ -128,10 +128,10 @@ function defaultSettings(): Settings {
   const agentUrl = String(agent.url || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
   return {
     ui_language: "system",
-    agent_provider: "volcengine",
     ai_base_url: agentUrl,
     ai_api_key: String(agent.key || ""),
     ai_model: String(agent.model || "deepseek-v3-2-251201"),
+    ai_max_output_tokens: 16000,
     agent_api_type: "chat",
     professional_field: "computer-science research",
     research_area: "",
@@ -140,6 +140,9 @@ function defaultSettings(): Settings {
     copy_quote_template: "> {{ paragraph_content }}\n\nSource: {{ page_marker }}",
     quote_to_note_template: "{{ page_marker }}",
     quote_to_readerm_template: "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
+    pdf_paragraph_actions_enabled: true,
+    pdf_author_graph_enabled: true,
+    pdf_internal_link_preview_enabled: true,
     summary_source: "pdf-extractor",
     summary_text_char_limit: 120000,
     summary_figure_attachment_limit: 10,
@@ -157,6 +160,7 @@ function defaultSettings(): Settings {
     markdown_highlight_color: "#fff3bf",
     markdown_math_enabled: true,
     markdown_html_live_enabled: true,
+    markdown_live_list_folding_enabled: true,
     markdown_default_editor_mode: "live",
     readerm_edit_split_default: false,
     readerm_preview_position: "right",
@@ -449,6 +453,12 @@ export function clampSummaryTextCharLimit(value: unknown) {
   return Math.min(2000000, Math.max(0, Math.trunc(number)));
 }
 
+export function clampAiMaxOutputTokens(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 16000;
+  return Math.min(65536, Math.max(0, Math.trunc(number)));
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -542,6 +552,7 @@ export function createIpcContext(window: BrowserWindow) {
     extractReaderDocumentIdsFromMarkdown,
     buildReadermReferenceContext,
     getSettings,
+    clampAiMaxOutputTokens,
     clampSummaryFigureAttachmentLimit,
     clampSummaryTextCharLimit,
     isRecord,

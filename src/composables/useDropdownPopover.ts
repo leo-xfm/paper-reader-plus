@@ -1,6 +1,6 @@
 import { nextTick, onBeforeUnmount, ref } from "vue";
 
-export function useDropdownPopover(menuSelector: string, options: { matchTriggerWidth?: boolean; offset?: number } = {}) {
+export function useDropdownPopover(menuSelector: string, options: { matchTriggerWidth?: boolean; offset?: number; align?: "left" | "right" } = {}) {
   const open = ref(false);
   const rootRef = ref<HTMLElement | null>(null);
   const triggerRef = ref<HTMLElement | null>(null);
@@ -19,9 +19,13 @@ export function useDropdownPopover(menuSelector: string, options: { matchTrigger
     const rect = triggerRef.value?.getBoundingClientRect();
     if (!rect) return;
     const style: Record<string, string> = {
-      left: `${rect.left}px`,
       top: `${rect.bottom + offset}px`,
     };
+    if (options.align === "right") {
+      style.right = `${Math.max(12, window.innerWidth - rect.right)}px`;
+    } else {
+      style.left = `${rect.left}px`;
+    }
     if (options.matchTriggerWidth) style.width = `${rect.width}px`;
     menuStyle.value = style;
   }

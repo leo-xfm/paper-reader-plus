@@ -1,7 +1,7 @@
 .library {
   position: relative;
   z-index: 1;
-  width: 280px;
+  width: var(--library-width, 280px);
   border-right: 1px solid var(--color-border);
   background: var(--color-paper);
   display: flex;
@@ -14,6 +14,44 @@
 .library.collapsed {
   width: var(--rail-collapsed-width);
   overflow-x: hidden;
+}
+
+.library-resize-handle {
+  width: 4px;
+  min-width: 4px;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--color-paper);
+  cursor: col-resize;
+  position: relative;
+  z-index: 3;
+  touch-action: none;
+}
+
+.library-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+}
+
+.library-resize-handle:not(:disabled):hover,
+.library-resize-handle:not(:disabled):focus-visible,
+.library-resize-handle:not(:disabled):active {
+  background: var(--color-surface-muted);
+  box-shadow: none;
+}
+
+.library-resize-handle:disabled {
+  width: 0;
+  min-width: 0;
+  cursor: default;
+  opacity: 1;
 }
 
 .brand {
@@ -282,14 +320,20 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
-.library-item span {
+.library-item-title {
   width: 100%;
+  display: flex;
+  line-height: 1.25;
+}
+
+.library-item-title-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .health-dot {
@@ -308,12 +352,25 @@
   background: #ef4444;
 }
 
+.library-item-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .library-item small {
   color: var(--color-text-soft);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   width: 100%;
+}
+
+.library-item-file span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-item.active,

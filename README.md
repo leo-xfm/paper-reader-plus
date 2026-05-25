@@ -8,9 +8,20 @@ Paper Reader Plus is a desktop workspace for reading, annotating, translating, a
 
 ## Version
 
-Current app version: `0.2.2`
+Current app version: `0.2.3`
 
 Package manifest versions: ReaderP `1`, ReaderM `1`
+
+
+
+## What's New in 0.2.3
+
+- Added a dedicated PDF settings panel for paragraph actions, author graph hovers, and internal PDF link / figure / table previews.
+- Added an AI max output token setting. A value greater than `0` is sent as `max_tokens` for chat and streaming requests.
+- Added Live Markdown list folding, including per-list toggles and toolbar actions to expand or collapse all foldable lists.
+- Added "More tools" popovers to PDF, Markdown, table, and image toolbars so secondary actions remain available on narrower workspaces.
+- Added resizable library sidebar width and safer settings editing: settings changes are kept in a draft until saved.
+- Expanded localization and migration coverage for the new settings.
 
 
 
@@ -54,14 +65,14 @@ ReaderM documents can combine rendered tables, highlighted code, rich Markdown c
 ## Features
 
 - Local paper library: import `.pdf`, `.md`, `.readerp`, and `.readerm` files into a local Electron `userData` workspace.
-- PDF reading: scroll through papers, zoom, jump to pages, search loaded pages, view thumbnails and outlines, follow internal PDF links, and navigate back to previous positions.
+- PDF reading: scroll through papers, zoom, jump to pages, search loaded pages, view thumbnails and outlines, follow internal PDF links, navigate back to previous positions, and optionally disable paragraph actions, author graph hovers, or internal link / figure / table previews.
 - Evidence anchors: create stable links from notes and AI output back to exact PDF locations with `/reader?documentId=...&anchor=...` links.
 - Annotations: highlight, underline, add notes, quote selected text into Markdown, ask AI about a selection, or translate selected text.
 - Paragraph actions: detect visible PDF text blocks and run actions such as quote, translate, or ask AI on paragraph-level content.
-- Markdown writing: write notes and ReaderM documents with CodeMirror-powered Markdown editing, KaTeX math, Mermaid diagrams, callouts, task lists, tables, sanitized HTML blocks, code blocks with optional line numbers, syntax highlighting, safe links, local image assets, image size hints, captions, and reader anchor links.
+- Markdown writing: write notes and ReaderM documents with CodeMirror-powered Markdown editing, Live-mode list folding, KaTeX math, Mermaid diagrams, callouts, task lists, tables, sanitized HTML blocks, code blocks with optional line numbers, syntax highlighting, safe links, local image assets, image size hints, captions, and reader anchor links.
 - ReaderP packages: save PDF-centered reading sessions, notes, summaries, AI history, anchors, annotations, symbols, and referenced assets into portable `.readerp` files.
 - ReaderM packages: save Markdown-centered writing projects with linked paper references, anchors, annotations, symbols, assets, and edit/preview split workflows into portable `.readerm` files.
-- AI reading assistant: use an OpenAI-compatible chat completion API for paper Q&A, selection explanations, summaries, translations, metaphor explanations, and evidence-linked answers.
+- AI reading assistant: use an OpenAI-compatible chat completion API for paper Q&A, selection explanations, summaries, translations, metaphor explanations, evidence-linked answers, and configurable response token limits.
 - Translation modes: translate with the AI provider or dedicated Google Cloud Translation / Baidu General Translation integrations.
 - Formula OCR: recognize selected PDF formula regions through SimpleTex OCR when configured.
 - Quote templates: customize copied quotes, note markers, and ReaderM source links with simple template variables such as `paragraph_content`, `page_marker`, `passage_name`, `page_number`, `page_label`, and `href`.

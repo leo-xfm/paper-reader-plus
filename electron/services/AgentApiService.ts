@@ -239,15 +239,18 @@ export function parseAgentStreamEvent(event: string) {
 
 function agentRequestBody(settings: Settings, payload: AgentChatPayload, stream = false) {
   const messages = buildAgentMessages(settings, payload, { includeImages: true });
+  const maxTokens = Math.trunc(Number(settings.ai_max_output_tokens || 0));
   return {
     model: settings.ai_model,
     messages,
     temperature: 0.2,
+    ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}),
     ...(stream ? { stream: true } : {}),
   };
 }
 
 function textOnlyAgentRequestBody(settings: Settings, payload: AgentChatPayload, stream = false) {
+  const maxTokens = Math.trunc(Number(settings.ai_max_output_tokens || 0));
   return {
     model: settings.ai_model,
     messages: buildAgentMessages(settings, payload, { includeImages: false }).map((message) => ({
@@ -255,6 +258,7 @@ function textOnlyAgentRequestBody(settings: Settings, payload: AgentChatPayload,
       content: messageText(message.content),
     })),
     temperature: 0.2,
+    ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}),
     ...(stream ? { stream: true } : {}),
   };
 }

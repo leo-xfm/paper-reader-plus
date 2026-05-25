@@ -4,10 +4,10 @@ import type { Settings } from "../electron/services/SettingsTypes";
 
 const settings: Settings = {
   ui_language: "system",
-  agent_provider: "volcengine",
   ai_base_url: "https://ark.cn-beijing.volces.com/api/v3",
   ai_api_key: "test-key",
   ai_model: "deepseek-v3-2-251201",
+  ai_max_output_tokens: 16000,
   agent_api_type: "chat",
   professional_field: "computer-science research",
   research_area: "",
@@ -16,6 +16,9 @@ const settings: Settings = {
   copy_quote_template: "> {{ paragraph_content }}\n\nSource: {{ page_marker }}",
   quote_to_note_template: "{{ page_marker }}",
   quote_to_readerm_template: "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
+  pdf_paragraph_actions_enabled: true,
+  pdf_author_graph_enabled: true,
+  pdf_internal_link_preview_enabled: true,
   summary_source: "pdf-extractor",
   summary_text_char_limit: 120000,
   summary_figure_attachment_limit: 10,
@@ -33,6 +36,7 @@ const settings: Settings = {
   markdown_highlight_color: "#fff3bf",
   markdown_math_enabled: true,
   markdown_html_live_enabled: true,
+  markdown_live_list_folding_enabled: true,
   markdown_default_editor_mode: "live",
   readerm_edit_split_default: false,
   readerm_preview_position: "right",
@@ -269,5 +273,28 @@ describe("AgentApiService", () => {
       content += delta;
     }
     expect(content).toBe("Hello");
+  });
+
+  it("sends configured max output tokens in streamed chat requests", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    for await (const _delta of streamAgentChatDeltas({
+      ...settings,
+      ai_max_output_tokens: 24000,
+    }, {
+      task: "summary",
+      reader_context: { document: { title: "Paper" }, summary_source: { content: "Paper text." } },
+    })) {
+      // consume stream
+    }
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body || "{}"));
+    expect(request.max_tokens).toBe(24000);
   });
 });

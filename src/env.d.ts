@@ -63,6 +63,7 @@ type MenuAction =
   | "toggle-search"
   | "toggle-outline"
   | "settings-general"
+  | "settings-pdf"
   | "settings-markdown"
   | "settings-agent-api"
   | "settings-ocr-api"

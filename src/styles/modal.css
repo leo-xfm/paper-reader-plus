@@ -41,8 +41,8 @@
 
 .settings-modal-header h2 {
   margin: 0;
-  color: var(--color-text);
-  font-size: 22px;
+  color: #377e9a;
+  font-size: 24px;
   font-weight: 750;
   line-height: 1.2;
 }
@@ -68,7 +68,7 @@
 }
 
 .settings-general-title {
-  color: var(--color-text);
+  color: #377e9a;
   font-size: 14px;
   font-weight: 700;
   line-height: 1.25;
@@ -81,14 +81,20 @@
   border-top: 1px solid var(--color-border);
 }
 
+.settings-general-section-first {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .settings-general-section h3 {
   margin: 0;
-  color: var(--color-text);
-  font-size: 13px;
-  font-weight: 720;
+  color: #377e9a;
+  font-size: 14px;
+  font-weight: 650;
   line-height: 1.25;
 }
 
+.settings-general-section > small,
 .settings-general-item small {
   color: var(--color-text-muted);
   font-size: 12px;
@@ -104,8 +110,26 @@
   min-height: 28px;
   color: var(--color-text);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 400;
   line-height: 1.35;
+}
+
+.settings-checkbox span {
+  font-weight: 400;
+}
+
+.settings-detail-line {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.settings-two-column-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 1fr);
+  align-items: center;
+  gap: 12px;
 }
 
 .modal .settings-checkbox input {
@@ -170,9 +194,9 @@
 
 .settings-context-options h3 {
   margin: 0 0 2px;
-  color: var(--color-text);
-  font-size: 13px;
-  font-weight: 720;
+  color: #377e9a;
+  font-size: 14px;
+  font-weight: 650;
   line-height: 1.2;
 }
 
@@ -253,7 +277,7 @@
   display: grid;
   gap: 7px;
   color: var(--color-text);
-  font-weight: 620;
+  font-weight: 500;
 }
 
 .modal input,
@@ -326,6 +350,18 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 2px;
+}
+
+.modal-actions button {
+  min-width: 92px;
+  justify-content: center;
+}
+
+@media (max-width: 680px) {
+  .settings-grid,
+  .settings-two-column-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .latex-modal {

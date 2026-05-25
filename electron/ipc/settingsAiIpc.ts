@@ -167,6 +167,9 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
       markdown_line_height: clampMarkdownLineHeight(patch.markdown_line_height ?? current.markdown_line_height),
       markdown_code_font_scale: clampMarkdownCodeFontScale(patch.markdown_code_font_scale ?? current.markdown_code_font_scale),
       markdown_code_line_height: clampMarkdownCodeLineHeight(patch.markdown_code_line_height ?? current.markdown_code_line_height),
+      ai_max_output_tokens: ctx.clampAiMaxOutputTokens(
+        patch.ai_max_output_tokens ?? current.ai_max_output_tokens,
+      ),
       markdown_western_font_family: cleanMarkdownWesternFontFamily(
         patch.markdown_western_font_family ?? current.markdown_western_font_family ?? current.markdown_font_family,
       ),
@@ -180,6 +183,7 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
       markdown_highlight_color: cleanMarkdownHighlightColor(patch.markdown_highlight_color ?? current.markdown_highlight_color),
       markdown_math_enabled: patch.markdown_math_enabled === undefined ? current.markdown_math_enabled : patch.markdown_math_enabled !== false,
       markdown_html_live_enabled: patch.markdown_html_live_enabled === undefined ? current.markdown_html_live_enabled : patch.markdown_html_live_enabled !== false,
+      markdown_live_list_folding_enabled: patch.markdown_live_list_folding_enabled === undefined ? current.markdown_live_list_folding_enabled : patch.markdown_live_list_folding_enabled !== false,
       markdown_default_editor_mode: cleanMarkdownDefaultEditorMode(patch.markdown_default_editor_mode ?? current.markdown_default_editor_mode),
       readerm_edit_split_default: patch.readerm_edit_split_default === undefined ? current.readerm_edit_split_default : patch.readerm_edit_split_default === true,
       readerm_preview_position: cleanReadermPreviewPosition(patch.readerm_preview_position ?? current.readerm_preview_position),
@@ -196,6 +200,9 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
         patch.quote_to_readerm_template ?? current.quote_to_readerm_template,
         "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
       ),
+      pdf_paragraph_actions_enabled: patch.pdf_paragraph_actions_enabled === undefined ? current.pdf_paragraph_actions_enabled : patch.pdf_paragraph_actions_enabled !== false,
+      pdf_author_graph_enabled: patch.pdf_author_graph_enabled === undefined ? current.pdf_author_graph_enabled : patch.pdf_author_graph_enabled !== false,
+      pdf_internal_link_preview_enabled: patch.pdf_internal_link_preview_enabled === undefined ? current.pdf_internal_link_preview_enabled : patch.pdf_internal_link_preview_enabled !== false,
       ai_send_notes_context: patch.ai_send_notes_context !== false,
       ai_send_summary_context: patch.ai_send_summary_context !== false,
       ai_send_annotations_context: patch.ai_send_annotations_context !== false,

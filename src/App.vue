@@ -87,6 +87,7 @@ const titleDraft = ref("");
 const editingTitle = ref(false);
 const rightPanelTab = ref<RightPanelTab>("annotations");
 const libraryCollapsed = ref(false);
+const libraryWidth = ref(280);
 const rightPanelCollapsed = ref(false);
 const rightPanelWidth = ref(560);
 const notesMode = ref<MarkdownEditorMode>("edit");
@@ -129,6 +130,7 @@ const activeSymbol = ref("");
 const annotationColor = ref("#BBD4F6");
 const pendingImageInsert = ref<{ target: "notes" | "summary"; selection?: { start: number; end: number }; kind?: "image" | "formula" } | null>(null);
 const activeSettingsPanel = ref<SettingsPanel | null>(null);
+const settingsDraft = ref<Settings | null>(null);
 const arxivImportOpen = ref(false);
 const arxivIdDraft = ref("");
 const arxivImportMode = ref<"pdf" | "pdf-latex">("pdf-latex");
@@ -226,7 +228,16 @@ const readermReferencedPdfDocumentId = computed(() => activeReadermReference.val
 const readermPdfDocumentId = computed(() => readermManualPdfDocumentId.value || readermReferencedPdfDocumentId.value);
 const readermPdfAnchorId = computed(() => readermManualPdfDocumentId.value ? readermManualPdfAnchorId.value : activeReadermReference.value?.status === "resolved" ? activeReadermReference.value.anchor_id : "");
 const readermPdfSourceView = ref<ReaderDocumentView>("pdf");
+const libraryResizeHandleWidth = 4;
+const libraryWidthMin = 220;
+const libraryWidthMax = 420;
 const readermResizeHandleWidth = 3;
+const libraryStyle = computed(() => ({
+  "--library-width": `${clampLibraryWidth(libraryWidth.value)}px`,
+}));
+const appShellStyle = computed(() => ({
+  gridTemplateColumns: `auto ${libraryCollapsed.value ? 0 : libraryResizeHandleWidth}px minmax(0, 1fr)`,
+}));
 const clampedReadermPdfPaneWidth = computed(() => clampReadermPdfPaneWidth(readermPdfPaneWidth.value));
 const readermLayoutStyle = computed(() => ({
   gridTemplateColumns: readermPdfCollapsed.value
@@ -235,7 +246,7 @@ const readermLayoutStyle = computed(() => ({
 }));
 const authorProfiles = computed(() => buildAuthorNetwork(Object.values(authorDocuments.value)));
 const agentStatusLabel = computed(() => settings.value
-  ? `${settings.value.agent_provider} / ${settings.value.ai_model} / docs/*.j2`
+  ? `${settings.value.ai_model} / docs/*.j2`
   : t("app.agentTemplates"));
 const defaultMarkdownEditorMode = computed<MarkdownEditorMode>(() => {
   const mode = settings.value?.markdown_default_editor_mode;
@@ -1341,15 +1352,16 @@ function handleMenuAction(action: Parameters<typeof window.paperReaderPlus.onMen
     "translate-selection": () => void translateSelection(),
     "toggle-search": openSearch,
     "toggle-outline": () => { libraryCollapsed.value = false; },
-    "settings-general": () => { activeSettingsPanel.value = "general"; },
-    "settings-markdown": () => { activeSettingsPanel.value = "markdown"; },
-    "settings-agent-api": () => { activeSettingsPanel.value = "agent-api"; },
-    "settings-ocr-api": () => { activeSettingsPanel.value = "ocr-api"; },
-    "settings-translation-api": () => { activeSettingsPanel.value = "translation-api"; },
-    "settings-network-proxy": () => { activeSettingsPanel.value = "general"; },
+    "settings-general": () => openSettingsPanel("general"),
+    "settings-pdf": () => openSettingsPanel("pdf"),
+    "settings-markdown": () => openSettingsPanel("markdown"),
+    "settings-agent-api": () => openSettingsPanel("agent-api"),
+    "settings-ocr-api": () => openSettingsPanel("ocr-api"),
+    "settings-translation-api": () => openSettingsPanel("translation-api"),
+    "settings-network-proxy": () => openSettingsPanel("general"),
     "settings-file-associations": () => { void openFileAssociationSettings(); },
-    "settings-system-prompt": () => { activeSettingsPanel.value = "system-prompt"; },
-    "settings-summary-prompt": () => { activeSettingsPanel.value = "summary-prompt"; },
+    "settings-system-prompt": () => openSettingsPanel("system-prompt"),
+    "settings-summary-prompt": () => openSettingsPanel("summary-prompt"),
   } satisfies Record<string, () => void>;
   actions[action]?.();
 }
@@ -1409,7 +1421,7 @@ async function loadSettings() {
 }
 
 async function openFileAssociationSettings() {
-  activeSettingsPanel.value = "file-associations";
+  openSettingsPanel("file-associations");
   try {
     fileAssociationStatus.value = await window.paperReaderPlus.getFileAssociationStatus();
   } catch (cause) {
@@ -1417,15 +1429,31 @@ async function openFileAssociationSettings() {
   }
 }
 
+function cloneSettings(value: Settings) {
+  return JSON.parse(JSON.stringify(value)) as Settings;
+}
+
+function openSettingsPanel(panel: SettingsPanel) {
+  if (!settings.value) return;
+  settingsDraft.value = cloneSettings(settings.value);
+  activeSettingsPanel.value = panel;
+}
+
+function closeSettingsPanel() {
+  settingsDraft.value = null;
+  activeSettingsPanel.value = null;
+}
+
 async function loadDictionary() {
   dictionaryEntries.value = await window.paperReaderPlus.listDictionary();
 }
 
 async function saveSettings() {
-  if (!settings.value) return;
-  settings.value = await window.paperReaderPlus.updateSettings(toIpcPlainObject(settings.value));
+  if (!settingsDraft.value) return;
+  settings.value = await window.paperReaderPlus.updateSettings(toIpcPlainObject(settingsDraft.value));
   setUiLanguage(settings.value.ui_language);
   setMarkdownFontSize(settings.value.markdown_default_font_size);
+  settingsDraft.value = null;
   activeSettingsPanel.value = null;
   showNotice(t("app.settingsSaved"));
 }
@@ -1574,10 +1602,11 @@ async function handleCloseRequest() {
 }
 
 async function testAgentSettings() {
-  if (!settings.value || settingsTesting.value) return;
+  const currentSettings = settingsDraft.value ?? settings.value;
+  if (!currentSettings || settingsTesting.value) return;
   settingsTesting.value = "agent";
   try {
-    const result = await window.paperReaderPlus.testAgentSettings(toIpcPlainObject(settings.value));
+    const result = await window.paperReaderPlus.testAgentSettings(toIpcPlainObject(currentSettings));
     showNotice(t("app.agentTestOk", { content: result.content || t("app.connected") }));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
@@ -1587,10 +1616,11 @@ async function testAgentSettings() {
 }
 
 async function testTranslationSettings() {
-  if (!settings.value || settingsTesting.value) return;
+  const currentSettings = settingsDraft.value ?? settings.value;
+  if (!currentSettings || settingsTesting.value) return;
   settingsTesting.value = "translation";
   try {
-    const result = await window.paperReaderPlus.testTranslationSettings(toIpcPlainObject(settings.value));
+    const result = await window.paperReaderPlus.testTranslationSettings(toIpcPlainObject(currentSettings));
     showNotice(t("app.translationTestOk", { content: result.content || t("app.connected") }));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
@@ -1600,10 +1630,11 @@ async function testTranslationSettings() {
 }
 
 async function testSimpleTexOcrSettings() {
-  if (!settings.value || settingsTesting.value) return;
+  const currentSettings = settingsDraft.value ?? settings.value;
+  if (!currentSettings || settingsTesting.value) return;
   settingsTesting.value = "simpletex";
   try {
-    const result = await window.paperReaderPlus.testSimpleTexOcrSettings(toIpcPlainObject(settings.value));
+    const result = await window.paperReaderPlus.testSimpleTexOcrSettings(toIpcPlainObject(currentSettings));
     showNotice(t("app.simpletexTestOk", { content: result.content || t("app.connected") }));
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
@@ -1852,6 +1883,36 @@ function captureReadermRegion(payload?: { start: number; end: number } | { selec
   readermCaptureRequest.value = { requestId: Date.now(), selection: selection ?? getCurrentReadermInsertionSelection(), kind };
 }
 
+function clampLibraryWidth(width: number) {
+  return Math.min(libraryWidthMax, Math.max(libraryWidthMin, width));
+}
+
+function startLibraryResize(event: PointerEvent) {
+  if (libraryCollapsed.value) return;
+  event.preventDefault();
+  const handle = event.currentTarget as HTMLElement;
+  handle.setPointerCapture(event.pointerId);
+  document.body.classList.add("resizing");
+  const startX = event.clientX;
+  const startWidth = libraryWidth.value;
+
+  const onMove = (moveEvent: PointerEvent) => {
+    const delta = moveEvent.clientX - startX;
+    libraryWidth.value = clampLibraryWidth(startWidth + delta);
+  };
+  const onUp = (upEvent: PointerEvent) => {
+    if (handle.hasPointerCapture(upEvent.pointerId)) handle.releasePointerCapture(upEvent.pointerId);
+    document.body.classList.remove("resizing");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+  };
+
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+}
+
 function clampReadermPdfPaneWidth(width: number) {
   const minMarkdownWidth = 420;
   const minPdfWidth = 360;
@@ -1906,9 +1967,10 @@ function focusAnchor(anchorId: string) {
 
 <template>
   <HelpPage v-if="isHelpPage" />
-  <main v-else class="app-shell">
+  <main v-else class="app-shell" :style="appShellStyle">
     <ReaderSidebar
       v-model:collapsed="libraryCollapsed"
+      :style="libraryStyle"
       :documents="documents"
       :selected-document-id="selectedDocumentId"
       :pdf-document="pdfDocument"
@@ -1931,6 +1993,15 @@ function focusAnchor(anchorId: string) {
       @open-search-result="openLibrarySearchResult"
       @scroll-to-page="scrollToPage"
       @outline-item-click="handleOutlineItemClick"
+    />
+
+    <button
+      type="button"
+      class="library-resize-handle"
+      :disabled="libraryCollapsed"
+      :aria-hidden="libraryCollapsed"
+      tabindex="-1"
+      @pointerdown="startLibraryResize"
     />
 
     <section class="workspace">
@@ -2121,6 +2192,9 @@ function focusAnchor(anchorId: string) {
               :dictionary-entries="dictionaryEntries"
               :dictionary-preview="dictionaryPreview"
               :capture-image-scale="settings?.capture_image_scale || 2"
+              :pdf-paragraph-actions-enabled="settings?.pdf_paragraph_actions_enabled !== false"
+              :pdf-author-graph-enabled="settings?.pdf_author_graph_enabled !== false"
+              :pdf-internal-link-preview-enabled="settings?.pdf_internal_link_preview_enabled !== false"
               :can-open-annotations="!context.document.readerp_path"
               @edit-title="editingTitle = true"
               @save-title="saveTitle"
@@ -2305,14 +2379,14 @@ function focusAnchor(anchorId: string) {
       />
 
       <SettingsModal
-        v-if="settings && activeSettingsPanel"
+        v-if="settingsDraft && activeSettingsPanel"
         :panel="activeSettingsPanel"
-        :settings="settings"
+        :settings="settingsDraft"
         :prompt-template-preview="promptTemplatePreview"
         :testing="settingsTesting"
         :file-association-status="fileAssociationStatus"
         :file-association-busy="fileAssociationBusy"
-        @close="activeSettingsPanel = null"
+        @close="closeSettingsPanel"
         @save="saveSettings"
         @test-agent="testAgentSettings"
         @test-translation="testTranslationSettings"

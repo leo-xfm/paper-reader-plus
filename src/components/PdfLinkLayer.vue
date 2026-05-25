@@ -7,6 +7,7 @@ const props = defineProps<{
   pdfDocument: PdfDocumentProxyLike | null;
   pageNumber: number;
   metrics: PdfPageMetrics | null;
+  previewEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -84,6 +85,7 @@ function clearPreviewTimer() {
 }
 
 function schedulePreview(link: PdfLinkAnnotation, event: MouseEvent) {
+  if (props.previewEnabled === false) return;
   if (link.url) return;
   clearPreviewTimer();
   const position = { left: event.clientX + 14, top: event.clientY + 14 };
@@ -95,6 +97,7 @@ function schedulePreview(link: PdfLinkAnnotation, event: MouseEvent) {
 
 function clearPreview() {
   clearPreviewTimer();
+  if (props.previewEnabled === false) return;
   emit("clearLinkPreview");
 }
 </script>

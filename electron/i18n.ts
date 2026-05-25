@@ -38,6 +38,7 @@ type MenuKey =
   | "translateSelection"
   | "settings"
   | "general"
+  | "pdf"
   | "markdown"
   | "agentApi"
   | "ocrApi"
@@ -117,6 +118,7 @@ const menuMessages: Record<ResolvedMenuLanguage, Partial<Record<MenuKey, string>
     translateSelection: "Translate Selection",
     settings: "Settings",
     general: "General",
+    pdf: "PDF",
     markdown: "Markdown",
     agentApi: "Agent API",
     ocrApi: "OCR API",
@@ -163,6 +165,7 @@ const menuMessages: Record<ResolvedMenuLanguage, Partial<Record<MenuKey, string>
     translateSelection: "翻译所选内容",
     settings: "设置",
     general: "通用",
+    pdf: "PDF",
     markdown: "Markdown 文件",
     agentApi: "AI 接口",
     ocrApi: "OCR 接口",

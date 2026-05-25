@@ -90,7 +90,7 @@
   display: grid;
   grid-template-columns: minmax(190px, max-content) minmax(0, 1fr) max-content;
   gap: 10px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .toolbar-zone {
@@ -111,6 +111,7 @@
 
 .toolbar-zone-right {
   justify-content: flex-end;
+  overflow: visible;
 }
 
 .toolbar-group {
@@ -125,43 +126,133 @@
 
 .toolbar-zone-center .toolbar-group,
 .toolbar-zone-right .toolbar-group {
-  overflow: hidden;
+  overflow: visible;
 }
 
-@container (max-width: 630px) {
+@container (max-width: 690px) {
   .pdf-toolbar-ask-ai {
     display: none !important;
   }
 }
 
-@container (max-width: 590px) {
+@container (max-width: 650px) {
+  .pdf-toolbar-undo {
+    display: none !important;
+  }
+}
+
+@container (max-width: 625px) {
   .pdf-toolbar-float-window {
     display: none !important;
   }
 }
 
-@container (max-width: 560px) {
+@container (max-width: 600px) {
   .pdf-toolbar-translate {
     display: none !important;
   }
 }
 
-@container (max-width: 530px) {
+@container (max-width: 570px) {
   .pdf-toolbar-quote {
     display: none !important;
   }
 }
 
-@container (max-width: 500px) {
+@container (max-width: 520px) {
   .pdf-toolbar-annotation-color {
     display: none !important;
   }
 }
 
-@container (max-width: 450px) {
+@container (max-width: 470px) {
   .pdf-toolbar-delete {
     display: none !important;
   }
+}
+
+@container (max-width: 445px) {
+  .pdf-toolbar-search {
+    display: none !important;
+  }
+}
+
+@container (max-width: 400px) {
+  .pdf-toolbar-reset-zoom {
+    display: none !important;
+  }
+}
+
+@container (max-width: 370px) {
+  .pdf-toolbar-underline {
+    display: none !important;
+  }
+}
+
+@container (max-width: 340px) {
+  .pdf-toolbar-highlight {
+    display: none !important;
+  }
+}
+
+.pdf-more-tools-separator {
+  height: 1px;
+  background: var(--color-border);
+  margin: 2px 0;
+}
+
+.pdf-more-tools {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.pdf-toolbar button.pdf-more-tools-trigger {
+  display: inline-flex;
+}
+
+.pdf-more-tools-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 80;
+  display: grid;
+  gap: 5px;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-paper);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+body > .pdf-more-tools-floating {
+  position: fixed;
+  z-index: 2147483000;
+}
+
+body > .color-dropdown-menu {
+  z-index: 2147483001;
+}
+
+.pdf-more-tools-menu button {
+  width: 100% !important;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.pdf-more-tools-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-more-tools-color {
+  width: 100%;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 7px;
+  margin-bottom: 2px;
 }
 
 .toolbar-zone-left .toolbar-group {
