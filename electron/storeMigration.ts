@@ -67,6 +67,26 @@ export type StoredParagraphTranslation = {
   updated_at: string;
 };
 
+export type StoredFormulaAnalysis = {
+  formula_id: string;
+  document_id: string;
+  latex: string;
+  raw_text: string;
+  analysis: string;
+  source: "pdf" | "latex";
+  page_index?: number;
+  rects_pct?: RectPct[];
+  context?: string;
+  importance_score: number;
+  status: "pending" | "parsed" | "error";
+  confidence?: number;
+  request_id?: string;
+  error?: string;
+  latex_line?: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type StoredDocumentViewState = {
   version: 1;
   updated_at?: string;
@@ -115,6 +135,7 @@ export type StoredDataV2 = {
   annotations: StoredAnnotation[];
   ai_history?: Record<string, Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>>;
   symbols?: Record<string, Array<Record<string, unknown>>>;
+  formulas?: Record<string, StoredFormulaAnalysis[]>;
   assets?: Array<Record<string, unknown>>;
   dictionary?: Array<Record<string, unknown>>;
   paragraph_translations?: Record<string, StoredParagraphTranslation[]>;
@@ -250,6 +271,8 @@ function cleanSettings(value: unknown) {
   const aiMaxOutputTokens = cleanNumber(settings.ai_max_output_tokens, 16000);
   const figureLimit = cleanNumber(settings.summary_figure_attachment_limit, 10);
   const textLimit = cleanNumber(settings.summary_text_char_limit, 120000);
+  const formulaContextLimit = cleanNumber(settings.formula_context_char_limit, 90000);
+  const formulaCandidateLimit = cleanNumber(settings.formula_candidate_limit, 180);
   const captureScale = cleanNumber(settings.capture_image_scale, 2);
   const markdownFontSize = cleanNumber(settings.markdown_default_font_size, 15);
   const markdownLineHeight = cleanNumber(settings.markdown_line_height, 1.6);
@@ -263,6 +286,14 @@ function cleanSettings(value: unknown) {
   settings.ai_max_output_tokens = Math.min(65536, Math.max(0, Math.trunc(aiMaxOutputTokens)));
   settings.summary_figure_attachment_limit = Math.min(20, Math.max(0, Math.trunc(figureLimit)));
   settings.summary_text_char_limit = Math.min(2000000, Math.max(0, Math.trunc(textLimit)));
+  settings.formula_context_char_limit = Math.min(2000000, Math.max(10000, Math.trunc(formulaContextLimit)));
+  settings.formula_candidate_limit = Math.min(1000, Math.max(20, Math.trunc(formulaCandidateLimit)));
+  settings.symbol_template = typeof settings.symbol_template === "string" && settings.symbol_template.trim()
+    ? settings.symbol_template
+    : undefined;
+  settings.formula_template = typeof settings.formula_template === "string" && settings.formula_template.trim()
+    ? settings.formula_template
+    : undefined;
   settings.capture_image_scale = Math.min(6, Math.max(1, Math.round(captureScale * 10) / 10));
   settings.markdown_default_font_size = Math.min(28, Math.max(11, Math.round(markdownFontSize)));
   settings.markdown_line_height = Math.min(2.2, Math.max(1.1, Math.round(markdownLineHeight * 100) / 100));
@@ -301,6 +332,7 @@ function cleanSettings(value: unknown) {
   settings.pdf_paragraph_actions_enabled = settings.pdf_paragraph_actions_enabled !== false;
   settings.pdf_author_graph_enabled = settings.pdf_author_graph_enabled !== false;
   settings.pdf_internal_link_preview_enabled = settings.pdf_internal_link_preview_enabled !== false;
+  settings.pdf_formula_hover_enabled = false;
   if (settings.markdown_default_editor_mode !== "edit" && settings.markdown_default_editor_mode !== "preview") {
     settings.markdown_default_editor_mode = "live";
   }
@@ -357,6 +389,59 @@ function cleanParagraphTranslations(value: unknown) {
   return result;
 }
 
+function cleanFormulaStatus(value: unknown): StoredFormulaAnalysis["status"] {
+  if (value === "parsed" || value === "error") return value;
+  return "pending";
+}
+
+function cleanFormulaSource(value: unknown): StoredFormulaAnalysis["source"] {
+  return value === "latex" ? "latex" : "pdf";
+}
+
+function migrateFormula(value: unknown, fallbackDocumentId: string): StoredFormulaAnalysis | null {
+  if (!isRecord(value)) return null;
+  const formulaId = cleanString(value.formula_id);
+  const documentId = cleanString(value.document_id, fallbackDocumentId);
+  const latex = cleanString(value.latex);
+  const rawText = cleanString(value.raw_text);
+  if (!formulaId || !documentId || (!latex && !rawText)) return null;
+  const createdAt = cleanString(value.created_at, new Date(0).toISOString());
+  const importance = Math.min(1, Math.max(0, cleanNumber(value.importance_score, 0.5)));
+  const confidence = value.confidence === undefined ? undefined : Math.min(1, Math.max(0, cleanNumber(value.confidence, 0.5)));
+  return {
+    formula_id: formulaId,
+    document_id: documentId,
+    latex,
+    raw_text: rawText,
+    analysis: cleanString(value.analysis),
+    source: cleanFormulaSource(value.source),
+    page_index: Number.isFinite(Number(value.page_index)) ? Math.max(0, Math.trunc(Number(value.page_index))) : undefined,
+    rects_pct: cleanRects(value.rects_pct),
+    context: typeof value.context === "string" ? value.context : undefined,
+    importance_score: importance,
+    status: cleanFormulaStatus(value.status),
+    confidence,
+    request_id: typeof value.request_id === "string" ? value.request_id : undefined,
+    error: typeof value.error === "string" ? value.error : undefined,
+    latex_line: Number.isFinite(Number(value.latex_line)) ? Math.max(1, Math.trunc(Number(value.latex_line))) : undefined,
+    created_at: createdAt,
+    updated_at: cleanString(value.updated_at, createdAt),
+  };
+}
+
+function cleanFormulas(value: unknown, documentIds: Set<string>) {
+  const result: Record<string, StoredFormulaAnalysis[]> = {};
+  if (!isRecord(value)) return result;
+  for (const [documentId, entries] of Object.entries(value)) {
+    if (documentIds.size && !documentIds.has(documentId)) continue;
+    const cleaned = Array.isArray(entries)
+      ? entries.map((entry) => migrateFormula(entry, documentId)).filter((entry): entry is StoredFormulaAnalysis => Boolean(entry))
+      : [];
+    if (cleaned.length) result[documentId] = cleaned.filter((entry) => entry.document_id === documentId);
+  }
+  return result;
+}
+
 function cleanFiniteNumber(value: unknown, min: number, max: number) {
   const number = Number(value);
   if (!Number.isFinite(number)) return undefined;
@@ -386,7 +471,7 @@ function cleanDocumentViewState(value: unknown): StoredDocumentViewState | null 
   });
   const readerPanelSource = value.reader_panel && isRecord(value.reader_panel) ? value.reader_panel : {};
   const readerPanel = compactRecord({
-    active_tab: cleanMode(readerPanelSource.active_tab, ["annotations", "notes", "summary", "symbols", "ai"]),
+    active_tab: cleanMode(readerPanelSource.active_tab, ["annotations", "notes", "summary", "symbols", "formulas", "ai"]),
     collapsed: cleanBoolean(readerPanelSource.collapsed),
     width: cleanFiniteNumber(readerPanelSource.width, 180, 2000),
     notes_mode: cleanMode(readerPanelSource.notes_mode, ["edit", "live", "preview"]),
@@ -457,6 +542,7 @@ export function migrateStoreToV3(input: unknown): StoredDataV2 {
     annotations,
     ai_history: isRecord(source.ai_history) ? source.ai_history as StoredDataV2["ai_history"] : {},
     symbols: isRecord(source.symbols) ? source.symbols as StoredDataV2["symbols"] : {},
+    formulas: cleanFormulas(source.formulas, documentIds),
     assets: Array.isArray(source.assets) ? source.assets.filter(isRecord) : [],
     dictionary: Array.isArray(source.dictionary) ? source.dictionary.filter(isRecord) : [],
     paragraph_translations: cleanParagraphTranslations(source.paragraph_translations),

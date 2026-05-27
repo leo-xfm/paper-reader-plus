@@ -7,10 +7,12 @@ import { dialogLabel } from "../i18n.js";
 import { buildPackageHealthReport } from "../services/HealthCheckService.js";
 import { cleanupUnusedDocumentResources } from "../services/MaintenanceService.js";
 import type { IpcContext, StoredSymbolDefinition } from "./storeContext.js";
+import type { StoredFormulaAnalysis } from "../storeMigration.js";
 
 type DeleteMode = "record" | "file";
-type SymbolRefreshSource = "latex" | "pdf";
+type SymbolRefreshSource = "latex" | "pdf" | "ai-pdf" | "ai-latex";
 type SymbolRefreshMode = "preserve-user-state" | "reset";
+type SymbolAiApplyMode = "complete" | "replace";
 type DocumentContextMenuResult = {
   action: "open-file" | "show-in-folder" | "properties" | "cleanup" | "delete";
   documentId: string;
@@ -57,7 +59,7 @@ function cleanSymbolDefinition(value: unknown): StoredSymbolDefinition | null {
   const normalized = String(value.normalized_symbol || normalizeSymbol(symbol)).trim();
   if (!symbol || !normalized) return null;
   const kind: StoredSymbolDefinition["kind"] = value.kind === "abbreviation" ? "abbreviation" : "symbol";
-  const source: StoredSymbolDefinition["source"] = value.source === "pdf" || value.source === "grobid" ? value.source : "latex";
+  const source: StoredSymbolDefinition["source"] = value.source === "pdf" || value.source === "grobid" || value.source === "ai" ? value.source : "latex";
   const rectsPct = Array.isArray(value.rects_pct)
     ? value.rects_pct.filter(isRecord).map((rect) => ({
       left: cleanNumber(rect.left),
@@ -102,6 +104,7 @@ async function saveReaderPackageSnapshot(ctx: IpcContext, documentId: string) {
     anchors: ctx.listAnchors(documentId),
     annotations: ctx.listAnnotations(documentId),
     symbols: ctx.store.symbols[documentId] || [],
+    formulas: ctx.store.formulas[documentId] || [],
     pdfData,
     latexData,
     assets: await ctx.packageAssetsForDocumentAsync(documentId, note, summary, aiHistory.map((message) => message.content).join("\n")),
@@ -149,15 +152,78 @@ async function confirmSymbolRefreshSource(ctx: IpcContext): Promise<SymbolRefres
     buttons: [
       dialogLabel(language, "button.fromLatex"),
       dialogLabel(language, "button.fromLoadedPdf"),
+      dialogLabel(language, "button.fromAiPdf"),
+      dialogLabel(language, "button.fromAiLatex"),
       dialogLabel(language, "button.cancel"),
     ],
     defaultId: 0,
-    cancelId: 2,
+    cancelId: 4,
     message: dialogLabel(language, "dialog.symbolRefreshSource.message"),
     detail: dialogLabel(language, "dialog.symbolRefreshSource.detail"),
   });
   if (result.response === 0) return "latex";
   if (result.response === 1) return "pdf";
+  if (result.response === 2) return "ai-pdf";
+  if (result.response === 3) return "ai-latex";
+  return null;
+}
+
+function cleanFormulaStatus(value: unknown): StoredFormulaAnalysis["status"] {
+  if (value === "parsed" || value === "error") return value;
+  return "pending";
+}
+
+function cleanFormulaAnalysis(value: unknown, documentId: string): StoredFormulaAnalysis | null {
+  if (!isRecord(value)) return null;
+  const formulaId = String(value.formula_id || "").trim();
+  const latex = String(value.latex || "");
+  const rawText = String(value.raw_text || "");
+  if (!formulaId || (!latex.trim() && !rawText.trim())) return null;
+  const rectsPct = Array.isArray(value.rects_pct)
+    ? value.rects_pct.filter(isRecord).map((rect) => ({
+      left: cleanNumber(rect.left),
+      top: cleanNumber(rect.top),
+      width: cleanNumber(rect.width),
+      height: cleanNumber(rect.height),
+    })).filter((rect) => rect.width > 0 && rect.height > 0)
+    : undefined;
+  return {
+    formula_id: formulaId,
+    document_id: documentId,
+    latex,
+    raw_text: rawText,
+    analysis: String(value.analysis || ""),
+    source: value.source === "latex" ? "latex" : "pdf",
+    page_index: Number.isFinite(Number(value.page_index)) ? Math.max(0, Math.trunc(Number(value.page_index))) : undefined,
+    rects_pct: rectsPct?.length ? rectsPct : undefined,
+    context: typeof value.context === "string" ? value.context : undefined,
+    importance_score: Math.min(1, Math.max(0, cleanNumber(value.importance_score, 0.5))),
+    status: cleanFormulaStatus(value.status),
+    confidence: value.confidence === undefined ? undefined : Math.min(1, Math.max(0, cleanNumber(value.confidence, 0.5))),
+    request_id: typeof value.request_id === "string" ? value.request_id : undefined,
+    error: typeof value.error === "string" ? value.error : undefined,
+    latex_line: Number.isFinite(Number(value.latex_line)) ? Math.max(1, Math.trunc(Number(value.latex_line))) : undefined,
+    created_at: typeof value.created_at === "string" ? value.created_at : "",
+    updated_at: typeof value.updated_at === "string" ? value.updated_at : "",
+  };
+}
+
+async function confirmSymbolAiApplyMode(ctx: IpcContext): Promise<SymbolAiApplyMode | null> {
+  const language = ctx.getSettings().ui_language;
+  const result = await dialog.showMessageBox(ctx.window, {
+    type: "question",
+    buttons: [
+      dialogLabel(language, "button.complete"),
+      dialogLabel(language, "button.resetAll"),
+      dialogLabel(language, "button.cancel"),
+    ],
+    defaultId: 0,
+    cancelId: 2,
+    message: dialogLabel(language, "dialog.symbolAiApplyMode.message"),
+    detail: dialogLabel(language, "dialog.symbolAiApplyMode.detail"),
+  });
+  if (result.response === 0) return "complete";
+  if (result.response === 1) return "replace";
   return null;
 }
 
@@ -187,6 +253,7 @@ async function deleteDocumentById(ctx: IpcContext, documentId: string, mode: Del
   delete ctx.store.summaries[documentId];
   delete ctx.store.ai_history[documentId];
   delete ctx.store.symbols[documentId];
+  delete ctx.store.formulas[documentId];
   delete ctx.store.paragraph_translations[documentId];
   delete ctx.store.view_states[documentId];
   ctx.store.assets = ctx.store.assets.filter((item) => item.document_id !== documentId);
@@ -261,6 +328,7 @@ export function registerDocumentIpc(ctx: IpcContext) {
       ai_history: ctx.store.ai_history[documentId] || [],
       assets: ctx.listAssets(documentId),
       symbols: ctx.store.symbols[documentId] || [],
+      formulas: ctx.store.formulas[documentId] || [],
       paragraph_translations: ctx.listParagraphTranslations(documentId),
       readerm_references: readerm?.references,
       referenced_documents: readerm?.referencedDocuments,
@@ -281,6 +349,21 @@ export function registerDocumentIpc(ctx: IpcContext) {
     if (document.source_type === "markdown" || document.source_type === "readerm") throw new Error("This document does not contain a PDF.");
     if (!existsSync(document.file_path)) throw new Error("PDF file is missing.");
     return readFile(document.file_path);
+  });
+
+  ipcMain.handle("documents:export-pdf", async (_event, documentId: string) => {
+    const document = ctx.getDocument(documentId);
+    if (document.source_type === "markdown" || document.source_type === "readerm") throw new Error("This document does not contain a PDF.");
+    if (!existsSync(document.file_path)) throw new Error("PDF file is missing.");
+    const safeTitle = (document.title || basename(document.file_path, ".pdf") || "paper").replace(/[<>:"/\\|?*]+/g, "_");
+    const result = await dialog.showSaveDialog(ctx.window, {
+      title: "Export PDF",
+      defaultPath: `${safeTitle}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, await readFile(document.file_path));
+    return result.filePath;
   });
 
   ipcMain.handle("documents:update-title", (_event, documentId: string, title: string) => {
@@ -336,6 +419,10 @@ export function registerDocumentIpc(ctx: IpcContext) {
 
   ipcMain.handle("symbols:confirm-refresh-mode", async () => {
     return confirmSymbolRefreshMode(ctx);
+  });
+
+  ipcMain.handle("symbols:confirm-ai-apply-mode", async () => {
+    return confirmSymbolAiApplyMode(ctx);
   });
 
   ipcMain.handle("documents:open-file", async (_event, documentId: string) => {
@@ -473,5 +560,27 @@ export function registerDocumentIpc(ctx: IpcContext) {
     ctx.saveStore();
     await saveReaderPackageSnapshot(ctx, documentId);
     return ctx.store.symbols[documentId];
+  });
+
+  ipcMain.handle("formulas:list", (_event, documentId: string) => {
+    ctx.getDocument(documentId);
+    return ctx.store.formulas[documentId] || [];
+  });
+
+  ipcMain.handle("formulas:save", async (_event, documentId: string, formulas: unknown[]) => {
+    const document = ctx.getDocument(documentId);
+    const timestamp = ctx.now();
+    ctx.store.formulas[documentId] = (Array.isArray(formulas) ? formulas : [])
+      .map((formula) => cleanFormulaAnalysis(formula, documentId))
+      .filter((formula): formula is StoredFormulaAnalysis => Boolean(formula))
+      .map((formula) => ({
+        ...formula,
+        created_at: formula.created_at || timestamp,
+        updated_at: formula.updated_at || timestamp,
+      }));
+    document.updated_at = timestamp;
+    ctx.saveStore();
+    await saveReaderPackageSnapshot(ctx, documentId);
+    return ctx.store.formulas[documentId];
   });
 }

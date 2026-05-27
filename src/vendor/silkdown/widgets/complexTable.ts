@@ -27,7 +27,7 @@ export class ComplexTableWidget extends WidgetType {
     }
     wrapper.dataset.tableWidth = parsed.width;
     const table = document.createElement("table");
-    table.style.width = parsed.width;
+    table.style.width = renderedComplexTableWidth(parsed.width);
     table.style.tableLayout = "fixed";
     const colgroup = document.createElement("colgroup");
     const grid = buildComplexTableGrid(parsed);
@@ -58,7 +58,7 @@ export class ComplexTableWidget extends WidgetType {
         if (sourceCell.align) cell.style.textAlign = sourceCell.align;
         cell.contentEditable = "true";
         cell.spellcheck = false;
-        cell.textContent = sourceCell.text;
+        renderCellTextWithBreaks(cell, sourceCell.text);
         addCellEvents(cell, table, origin.row, origin.col);
         addColumnResizeHandle(cell, table, wrapper, view, parsed, origin.col);
         tr.appendChild(cell);
@@ -119,6 +119,13 @@ export class ComplexTableWidget extends WidgetType {
   }
 }
 
+function renderedComplexTableWidth(width: string): string {
+  const trimmed = width.trim() || "100%";
+  const percent = trimmed.match(/^(\d+(?:\.\d+)?)%$/);
+  if (percent && Number(percent[1]) >= 100) return "calc(100% - 8px)";
+  return trimmed;
+}
+
 function addCellEvents(cell: HTMLTableCellElement, table: HTMLTableElement, row: number, col: number): void {
   cell.addEventListener("pointerdown", (event) => {
     if ((event.target as HTMLElement | null)?.closest(".sd-table-col-resizer")) return;
@@ -135,14 +142,36 @@ function addCellEvents(cell: HTMLTableCellElement, table: HTMLTableElement, row:
     }));
   });
   cell.addEventListener("focus", () => {
+    cell.textContent = cell.dataset.source || "";
     cell.dispatchEvent(new CustomEvent("silkdown-table-cell-focus", {
       bubbles: true,
       detail: { row, col, kind: "complex" },
     }));
   });
+  cell.addEventListener("blur", () => {
+    cell.dataset.source = (cell.textContent || "").replace(/\r?\n/g, " ");
+    renderCellTextWithBreaks(cell, cell.dataset.source);
+  });
   table.addEventListener("pointerup", () => {
     table.dispatchEvent(new CustomEvent("silkdown-table-selection-end", { bubbles: true }));
   }, { once: true });
+}
+
+function renderCellTextWithBreaks(cell: HTMLTableCellElement, source: string): void {
+  const fragment = document.createDocumentFragment();
+  const pattern = /<br\s*\/?>/gi;
+  let index = 0;
+  for (const match of source.matchAll(pattern)) {
+    const start = match.index || 0;
+    if (start > index) fragment.appendChild(document.createTextNode(source.slice(index, start)));
+    const marker = document.createElement("span");
+    marker.className = "sd-html-br-mark";
+    marker.textContent = match[0];
+    fragment.append(marker, document.createElement("br"));
+    index = start + match[0].length;
+  }
+  if (index < source.length) fragment.appendChild(document.createTextNode(source.slice(index)));
+  cell.replaceChildren(fragment);
 }
 
 function addColumnResizeHandle(

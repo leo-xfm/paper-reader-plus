@@ -35,6 +35,7 @@ export type ReadermPackageManifest = {
     anchors: string;
     annotations: string;
     symbols?: string;
+    formulas?: string;
     pdfs?: Record<string, string>;
     latex_files?: Record<string, string>;
     assets: string;
@@ -50,6 +51,7 @@ export type ReadermPackagePayload = {
   anchors: unknown[];
   annotations: unknown[];
   symbols?: unknown[];
+  formulas?: unknown[];
   pdfDataByDocumentId?: Record<string, Buffer>;
   latexDataByDocumentId?: Record<string, Buffer>;
   assets?: ReaderPackageAssetInput[];
@@ -197,6 +199,7 @@ function buildManifest(payload: ReadermPackagePayload): ReadermPackageManifest {
       anchors: "anchors.json",
       annotations: "annotations.json",
       symbols: "symbols.json",
+      formulas: "formulas.json",
       pdfs: payload.pdfDataByDocumentId
         ? Object.fromEntries(Object.keys(payload.pdfDataByDocumentId).map((documentId) => [documentId, `pdfs/${documentId}.pdf`]))
         : undefined,
@@ -217,6 +220,7 @@ export async function createReadermPackageBuffer(payload: ReadermPackagePayload)
   const documents = payload.documents.filter((document) => document.document_id === payload.document.document_id || referencedIds.has(document.document_id));
   const anchors = payload.anchors.filter((anchor) => typeof anchor === "object" && anchor !== null && referencedIds.has((anchor as { document_id?: string }).document_id || ""));
   const annotations = payload.annotations.filter((annotation) => typeof annotation === "object" && annotation !== null && referencedIds.has((annotation as { document_id?: string }).document_id || ""));
+  const formulas = (payload.formulas || []).filter((formula) => typeof formula === "object" && formula !== null && referencedIds.has((formula as { document_id?: string }).document_id || ""));
   const assets = packageAssets(payload);
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
   zip.file("readerm.md", payload.markdown);
@@ -225,6 +229,7 @@ export async function createReadermPackageBuffer(payload: ReadermPackagePayload)
   zip.file("anchors.json", JSON.stringify(anchors, null, 2));
   zip.file("annotations.json", JSON.stringify(annotations, null, 2));
   zip.file("symbols.json", JSON.stringify(payload.symbols || [], null, 2));
+  zip.file("formulas.json", JSON.stringify(formulas, null, 2));
   for (const [documentId, pdfData] of Object.entries(payload.pdfDataByDocumentId || {})) {
     if (referencedIds.has(documentId)) zip.file(`pdfs/${documentId}.pdf`, pdfData);
   }
@@ -258,6 +263,7 @@ export async function readReadermPackageBuffer(buffer: Buffer): Promise<ReadermP
   const anchors = parseJson<unknown[]>(await zip.file(manifest.files.anchors)?.async("string"), []);
   const annotations = parseJson<unknown[]>(await zip.file(manifest.files.annotations)?.async("string"), []);
   const symbols = parseJson<unknown[]>(await zip.file(manifest.files.symbols || "symbols.json")?.async("string"), []);
+  const formulas = parseJson<unknown[]>(await zip.file(manifest.files.formulas || "formulas.json")?.async("string"), []);
   const pdfDataByDocumentId: Record<string, Buffer> = {};
   const latexDataByDocumentId: Record<string, Buffer> = {};
   for (const [documentId, pdfPath] of Object.entries(manifest.files.pdfs || {})) {
@@ -301,6 +307,7 @@ export async function readReadermPackageBuffer(buffer: Buffer): Promise<ReadermP
     anchors,
     annotations,
     symbols,
+    formulas,
     pdfDataByDocumentId,
     latexDataByDocumentId,
     assets,

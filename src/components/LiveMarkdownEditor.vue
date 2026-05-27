@@ -77,6 +77,8 @@ import {
   continueBlockquoteOnEnter,
   completeBlockOnEnter,
   clearMarkdownFormatting,
+  deleteListMarkerOnBackspace,
+  deleteNextLineListMarkerOnDelete,
   extractImages,
   findLinkAt,
   findTableAt,
@@ -686,7 +688,7 @@ function tableRangeAtPosition(source: string, position: number): SourceSelection
   let offset = 0;
   for (let index = 0; index < lines.length - 1; index += 1) {
     const separator = lines[index + 1].trim();
-    if (!/^\|?.*\|.*$/.test(lines[index]) || !/^\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*\|?\s*$/.test(separator)) {
+    if (!/^\s*\|.*\|\s*$/.test(lines[index]) || !/^\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*\|?\s*$/.test(separator)) {
       offset += lines[index].length + 1;
       continue;
     }
@@ -2329,6 +2331,7 @@ function handleWindowTablePointerMove(event: PointerEvent) {
     return;
   }
   const cell = tableCellFromPoint(event.clientX, event.clientY);
+  if (!tableDragSelecting && (!cell || cell === tableDragStart.cell)) return;
   const distance = Math.hypot(event.clientX - tableDragStart.x, event.clientY - tableDragStart.y);
   if (!tableDragSelecting) {
     if (distance < 4) return;
@@ -2350,8 +2353,15 @@ function handleWindowTablePointerUp(event: PointerEvent) {
     event.stopPropagation();
     window.getSelection()?.removeAllRanges();
   } else if (dragStart) {
-    clearRenderedTableSelection();
-    focusTableCellAtPoint(dragStart.cell, event.clientX, event.clientY);
+    const selection = window.getSelection();
+    const selectingCellText = selection && !selection.isCollapsed
+      && selection.anchorNode && selection.focusNode
+      && dragStart.cell.contains(selection.anchorNode)
+      && dragStart.cell.contains(selection.focusNode);
+    if (!selectingCellText) {
+      clearRenderedTableSelection();
+      focusTableCellAtPoint(dragStart.cell, event.clientX, event.clientY);
+    }
   }
   tableSelectionAnchor = null;
   tableDragStart = null;
@@ -2376,8 +2386,6 @@ function handleEditorRootPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null;
   const cell = target?.closest(".sd-table-widget th, .sd-table-widget td") as HTMLTableCellElement | null;
   if (!cell || target?.closest(".sd-table-col-resizer")) return;
-  event.preventDefault();
-  event.stopPropagation();
   beginTableDragCandidate(event, cell);
 }
 
@@ -2616,9 +2624,8 @@ function handleTablePointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null;
   const cell = target?.closest(".sd-table-widget th, .sd-table-widget td") as HTMLTableCellElement | null;
   if (!cell || target?.closest(".sd-table-col-resizer")) return false;
-  event.preventDefault();
-  beginTableDragCandidate(event, cell);
-  return true;
+  if (tableDragStart?.cell !== cell) beginTableDragCandidate(event, cell);
+  return false;
 }
 
 function handleTablePointerEnter(event: PointerEvent) {
@@ -2862,13 +2869,12 @@ function deleteHeadingMarkerStep(editorView: EditorView) {
 function deleteListMarkerStep(editorView: EditorView) {
   const selection = editorView.state.selection.main;
   if (!selection.empty) return false;
-  const line = editorView.state.doc.lineAt(selection.from);
-  const beforeCursor = editorView.state.doc.sliceString(line.from, selection.from);
-  const match = beforeCursor.match(/^(\s*)([-+*])\s?$/);
-  if (!match) return false;
+  const edit = deleteListMarkerOnBackspace(editorView.state.doc.toString(), selection.from);
+  if (!edit) return false;
   editorView.dispatch({
-    changes: { from: line.from + match[1].length, to: selection.from },
-    selection: { anchor: line.from + match[1].length },
+    changes: { from: 0, to: editorView.state.doc.length, insert: edit.value },
+    selection: { anchor: edit.selection.start },
+    scrollIntoView: true,
   });
   return true;
 }
@@ -2913,22 +2919,14 @@ function backspacePairedBracketsStep(editorView: EditorView) {
   return true;
 }
 
-function nextLineListPrefixLength(text: string) {
-  const match = text.match(/^(\s*(?:[-+*]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+))/);
-  return match?.[1].length || 0;
-}
-
 function deleteNextLineListMarkerStep(editorView: EditorView) {
   const selection = editorView.state.selection.main;
   if (!selection.empty) return false;
-  const line = editorView.state.doc.lineAt(selection.from);
-  if (selection.from !== line.to || line.number >= editorView.state.doc.lines) return false;
-  const nextLine = editorView.state.doc.line(line.number + 1);
-  const prefixLength = nextLineListPrefixLength(nextLine.text);
-  if (prefixLength <= 0) return false;
+  const edit = deleteNextLineListMarkerOnDelete(editorView.state.doc.toString(), selection.from);
+  if (!edit) return false;
   editorView.dispatch({
-    changes: { from: line.to, to: nextLine.from + prefixLength, insert: "" },
-    selection: { anchor: line.to },
+    changes: { from: 0, to: editorView.state.doc.length, insert: edit.value },
+    selection: { anchor: edit.selection.start },
     scrollIntoView: true,
   });
   return true;

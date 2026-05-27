@@ -28,7 +28,7 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1480,
     height: 980,
-    minWidth: 1100,
+    minWidth: 360,
     minHeight: 700,
     title: "Paper Reader Plus",
     icon: appIconPath,

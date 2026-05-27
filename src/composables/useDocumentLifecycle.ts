@@ -12,6 +12,7 @@ import type {
   LibraryDocument,
   ReaderPackageAiHistory,
   RectPct,
+  FormulaAnalysis,
   SymbolDefinition,
 } from "@/types";
 
@@ -36,6 +37,7 @@ type UseDocumentLifecycleOptions = {
   dictionaryPreview: Ref<DictionaryHoverPreview | null>;
   latexSymbols: Ref<SymbolDefinition[]>;
   savedSymbols: Ref<SymbolDefinition[]>;
+  formulas: Ref<FormulaAnalysis[]>;
   activeSymbol: Ref<string>;
   arxivIdDraft: Ref<string>;
   arxivImportMode: Ref<"pdf" | "pdf-latex">;
@@ -210,6 +212,7 @@ export function useDocumentLifecycle(options: UseDocumentLifecycleOptions) {
     options.dictionaryPreview.value = null;
     options.latexSymbols.value = [];
     options.savedSymbols.value = [];
+    options.formulas.value = [];
     options.activeSymbol.value = "";
     options.clearPages();
     options.pageTextItems.value = {};
@@ -221,6 +224,7 @@ export function useDocumentLifecycle(options: UseDocumentLifecycleOptions) {
       options.summaryDraft.value = options.context.value.summary.content;
       options.aiMessages.value = options.context.value.ai_history || [];
       options.savedSymbols.value = options.context.value.symbols || [];
+      options.formulas.value = options.context.value.formulas || [];
       if (options.context.value.document.source_type === "readerm") {
         return;
       }

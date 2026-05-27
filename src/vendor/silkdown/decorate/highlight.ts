@@ -1,6 +1,6 @@
 import { Decoration } from "@codemirror/view";
 import type { EditorSelection, Range, Text } from "@codemirror/state";
-import { HIDE, pushAtomicRange } from "./shared.js";
+import { HIDE, pushAtomicRange, rangeIntersectsAnyRange, type SourceRange } from "./shared.js";
 
 function selectionTouches(sel: EditorSelection, from: number, to: number): boolean {
   for (const range of sel.ranges) {
@@ -22,6 +22,7 @@ export function decorateHighlight(
   sel: EditorSelection,
   from: number,
   to: number,
+  excludedRanges: readonly SourceRange[] = [],
 ): void {
   const mark = Decoration.mark({ class: "sd-highlight" });
   const fromLine = doc.lineAt(Math.max(0, from)).number;
@@ -41,6 +42,10 @@ export function decorateHighlight(
       if (close < 0 || close === open + 2) break;
       const fromPos = line.from + open;
       const toPos = line.from + close + 2;
+      if (rangeIntersectsAnyRange(fromPos, toPos, excludedRanges)) {
+        index = close + 2;
+        continue;
+      }
       ranges.push(mark.range(fromPos + 2, toPos - 2));
       if (!selectionTouches(sel, fromPos, toPos)) {
         pushAtomicRange(ranges, atomicRanges, HIDE, fromPos, fromPos + 2);

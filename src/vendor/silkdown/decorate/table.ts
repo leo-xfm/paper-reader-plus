@@ -6,12 +6,30 @@ import { TableWidget, type TableAlignment } from "../widgets/table.js";
 interface ParsedTable {
   rows: string[][];
   alignments: TableAlignment[];
+  indentColumns: number;
 }
 
 function splitTableRow(line: string): string[] {
   const trimmed = line.trim();
   const content = trimmed.replace(/^\|/, "").replace(/\|$/, "");
   return content.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableRowLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.includes("|")) return false;
+  if (/^\|.*\|\s*$/.test(trimmed)) return splitTableRow(trimmed).length >= 2;
+  return splitTableRow(trimmed).length >= 2 && /^[^|]+(?:\|[^|]+)+$/.test(trimmed);
+}
+
+function isGeneratedMarkdownTableRowLine(line: string): boolean {
+  const trimmed = line.trim();
+  return /^\|.*\|\s*$/.test(trimmed) && splitTableRow(trimmed).length >= 2;
+}
+
+function indentColumns(line: string): number {
+  const indent = line.match(/^[ \t]*/)?.[0] || "";
+  return indent.replace(/\t/g, "    ").length;
 }
 
 function alignmentFromCell(cell: string): TableAlignment {
@@ -30,6 +48,7 @@ function parseTable(source: string): ParsedTable | null {
   return {
     rows: [splitTableRow(lines[0]), ...lines.slice(2).map(splitTableRow)],
     alignments: separator.map(alignmentFromCell),
+    indentColumns: indentColumns(lines[0] || ""),
   };
 }
 
@@ -42,7 +61,7 @@ function decorateParsedTable(
   parsed: ParsedTable,
 ): void {
   ranges.push(Decoration.replace({
-    widget: new TableWidget(parsed.rows, parsed.alignments, from, to),
+    widget: new TableWidget(parsed.rows, parsed.alignments, from, to, parsed.indentColumns),
     block: true,
   }).range(from, to));
 }
@@ -71,11 +90,11 @@ export function decorateTablesInRange(
   for (let lineNumber = Math.max(1, startLine - 1); lineNumber < endLine; lineNumber += 1) {
     const header = doc.line(lineNumber);
     const separator = doc.line(lineNumber + 1);
-    if (handledStarts.has(header.from) || !header.text.includes("|") || !separator.text.includes("|")) continue;
+    if (handledStarts.has(header.from) || !isMarkdownTableRowLine(header.text) || !isMarkdownTableRowLine(separator.text)) continue;
     const separatorCells = splitTableRow(separator.text);
     if (!separatorCells.length || !separatorCells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))) continue;
     let lastLine = lineNumber + 1;
-    while (lastLine + 1 <= doc.lines && doc.line(lastLine + 1).text.includes("|")) lastLine += 1;
+    while (lastLine + 1 <= doc.lines && isGeneratedMarkdownTableRowLine(doc.line(lastLine + 1).text)) lastLine += 1;
     const tableFrom = header.from;
     const tableTo = doc.line(lastLine).to;
     const tableSource = doc.sliceString(tableFrom, tableTo);

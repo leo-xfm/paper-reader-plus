@@ -3,7 +3,7 @@ import type { EditorSelection, Range, Text } from "@codemirror/state";
 import type { SyntaxNode, Tree } from "@lezer/common";
 import { selectionTouchesLineRange, selectionTouchesRange } from "../util/selection.js";
 import { children } from "../util/tree.js";
-import { HIDE, MUTED_MARK, pushAtomicRange, pushRevealableMark } from "./shared.js";
+import { HIDE, MUTED_MARK, pushAtomicRange, pushRevealableMark, rangeIntersectsAnyRange, type SourceRange } from "./shared.js";
 import { defaultUrlPolicy, type UrlPolicy } from "../url.js";
 import { ImageWidget } from "../widgets/image.js";
 
@@ -228,6 +228,7 @@ export function decorateSizedMarkdownImages(
   to: number,
   urlPolicy: UrlPolicy = defaultUrlPolicy,
   options: SilkdownLinkOptions = {},
+  excludedRanges: readonly SourceRange[] = [],
 ): void {
   const startLine = doc.lineAt(Math.max(0, from));
   const endLine = doc.lineAt(Math.min(doc.length, to));
@@ -240,6 +241,7 @@ export function decorateSizedMarkdownImages(
     const start = scanFrom + (match.index || 0);
     const end = start + match[0].length;
     if (end < from || start > to) continue;
+    if (rangeIntersectsAnyRange(start, end, excludedRanges)) continue;
     covered.push([start, end]);
     pushSizedImageWidget(
       ranges,
@@ -263,6 +265,7 @@ export function decorateSizedMarkdownImages(
     const start = scanFrom + (match.index || 0);
     const end = start + match[0].length;
     if (end < from || start > to) continue;
+    if (rangeIntersectsAnyRange(start, end, excludedRanges)) continue;
     if (covered.some(([coveredFrom, coveredTo]) => start >= coveredFrom && end <= coveredTo)) continue;
     pushSizedImageWidget(
       ranges,

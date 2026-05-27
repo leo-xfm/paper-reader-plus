@@ -1,6 +1,6 @@
 import { Decoration } from "@codemirror/view";
 import type { EditorSelection, Range, Text } from "@codemirror/state";
-import { HIDE, pushAtomicRange } from "./shared.js";
+import { HIDE, pushAtomicRange, type SourceRange } from "./shared.js";
 import { MathBlockEditorWidget } from "../widgets/mathBlockEditor.js";
 import { MathWidget } from "../widgets/math.js";
 import { LiveBlockLineNumberWidget } from "../widgets/liveBlock.js";
@@ -103,6 +103,13 @@ function scanBlockMath(doc: Text, fromLine: number, toLine: number): MathRange[]
     }
   }
   return ranges;
+}
+
+export function blockMathSourceRanges(doc: Text): SourceRange[] {
+  return scanBlockMath(doc, 1, doc.lines).map((range) => ({
+    from: range.contentFrom,
+    to: range.contentTo,
+  }));
 }
 
 export function decorateBlockMath(

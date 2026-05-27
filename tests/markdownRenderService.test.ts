@@ -351,4 +351,10 @@ describe("MarkdownRenderService", () => {
     expect(html).toContain("相对性能提升");
     expect(html).toContain("80.0%");
   });
+
+  it("renders literal br markers in prose and table cells", () => {
+    const html = renderMarkdown("A<br>B\n\n| A | B |\n| --- | --- |\n| x<br>y | z |");
+    expect(html).toContain('<span class="markdown-html-br-mark">&lt;br&gt;</span><br>');
+    expect(html).toContain('<td>x<span class="markdown-html-br-mark">&lt;br&gt;</span><br>y</td>');
+  });
 });

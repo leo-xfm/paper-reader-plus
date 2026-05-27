@@ -83,6 +83,15 @@
 .pdf-title-row {
   display: flex;
   width: 100%;
+  gap: 8px;
+}
+
+.pdf-title-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 
 .pdf-action-row {
@@ -166,13 +175,7 @@
 }
 
 @container (max-width: 470px) {
-  .pdf-toolbar-delete {
-    display: none !important;
-  }
-}
-
-@container (max-width: 445px) {
-  .pdf-toolbar-search {
+  .pdf-title-save {
     display: none !important;
   }
 }

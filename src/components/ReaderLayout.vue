@@ -21,7 +21,7 @@ const emit = defineEmits<{
 const gridRef = ref<HTMLElement | null>(null);
 const resizeHandleWidth = 3;
 const defaultPanelWidth = 560;
-const minPdfWidth = 520;
+const preferredPdfWidth = 520;
 const minPanelWidth = 280;
 const maxPanelWidth = 860;
 const layoutGutter = 12;
@@ -33,7 +33,7 @@ const clampedRightPanelWidth = computed(() => clampRightPanelWidth(props.rightPa
 
 const gridStyle = computed(() => ({
   gridTemplateColumns: [
-    "minmax(520px, 1fr)",
+    "minmax(0, 1fr)",
     props.collapsed ? "0" : `${resizeHandleWidth}px`,
     props.collapsed ? "var(--rail-collapsed-width)" : `${clampedRightPanelWidth.value}px`,
   ].join(" "),
@@ -46,8 +46,15 @@ function openTab(tab: RightPanelTab) {
 
 function clampRightPanelWidth(width: number) {
   const availableGridWidth = gridWidth.value || gridRef.value?.clientWidth || 1200;
-  const maxByGrid = Math.max(minPanelWidth, availableGridWidth - minPdfWidth - resizeHandleWidth - layoutGutter);
-  return Math.min(maxPanelWidth, Math.max(minPanelWidth, Math.min(width, maxByGrid)));
+  const maxFittingPanelWidth = Math.max(0, availableGridWidth - resizeHandleWidth);
+  const minFittingPanelWidth = Math.min(minPanelWidth, maxFittingPanelWidth);
+  const maxByPreferredPdf = availableGridWidth - preferredPdfWidth - resizeHandleWidth - layoutGutter;
+  const maxByGrid = Math.min(
+    maxPanelWidth,
+    maxFittingPanelWidth,
+    Math.max(minFittingPanelWidth, maxByPreferredPdf),
+  );
+  return Math.min(maxByGrid, Math.max(minFittingPanelWidth, width));
 }
 
 function syncRightPanelWidth() {

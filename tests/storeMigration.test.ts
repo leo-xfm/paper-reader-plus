@@ -53,6 +53,7 @@ describe("store migration", () => {
     expect(migrated.settings.pdf_paragraph_actions_enabled).toBe(true);
     expect(migrated.settings.pdf_author_graph_enabled).toBe(true);
     expect(migrated.settings.pdf_internal_link_preview_enabled).toBe(true);
+    expect(migrated.settings.pdf_formula_hover_enabled).toBe(false);
     expect(migrated.settings.markdown_western_font_family).toBe("current");
     expect(migrated.settings.markdown_chinese_font_family).toBe("current");
     expect(migrated.settings.markdown_code_font_family).toBe("Consolas");
@@ -222,17 +223,20 @@ describe("store migration", () => {
       pdf_paragraph_actions_enabled: true,
       pdf_author_graph_enabled: true,
       pdf_internal_link_preview_enabled: true,
+      pdf_formula_hover_enabled: false,
     });
     expect(migrateStoreToV3({
       settings: {
         pdf_paragraph_actions_enabled: false,
         pdf_author_graph_enabled: false,
         pdf_internal_link_preview_enabled: false,
+        pdf_formula_hover_enabled: true,
       },
     }).settings).toMatchObject({
       pdf_paragraph_actions_enabled: false,
       pdf_author_graph_enabled: false,
       pdf_internal_link_preview_enabled: false,
+      pdf_formula_hover_enabled: false,
     });
   });
 

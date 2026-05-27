@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronLeft,
   ChevronRight,
+  Download,
   History,
   Highlighter,
   Languages,
@@ -13,8 +14,8 @@ import {
   PictureInPicture,
   Quote,
   RefreshCcw,
+  Save,
   Search,
-  Trash2,
   Underline,
   ZoomIn,
   ZoomOut,
@@ -29,7 +30,7 @@ import { useI18n } from "@/i18n";
 import type { AnnotationToolMode } from "@/services/ReaderAnnotationService";
 import type { PdfLinkReturnTarget } from "@/composables/usePdfPreviewActions";
 import type { PdfDocumentProxyLike, PdfHoverPreview, PdfLinkAnnotation, PdfPageMetrics, PdfReferenceCandidate, PdfSearchMatch, PdfTextItem } from "@/pdf/pdfTypes";
-import type { Anchor, Annotation, AuthorHoverPreview, AuthorProfile, DictionaryEntry, DictionaryHoverPreview, RectPct } from "@/types";
+import type { Anchor, Annotation, AuthorHoverPreview, AuthorProfile, DictionaryEntry, DictionaryHoverPreview, FormulaAnalysis, RectPct, Settings } from "@/types";
 
 const props = withDefaults(defineProps<{
   documentTitle: string;
@@ -62,6 +63,9 @@ const props = withDefaults(defineProps<{
   authorProfiles: AuthorProfile[];
   authorPreview: AuthorHoverPreview | null;
   dictionaryEntries: DictionaryEntry[];
+  documentId?: string;
+  formulas?: FormulaAnalysis[];
+  settings?: Settings | null;
   dictionaryPreview: DictionaryHoverPreview | null;
   captureImageScale?: number;
   pdfParagraphActionsEnabled?: boolean;
@@ -72,6 +76,8 @@ const props = withDefaults(defineProps<{
   canTranslate?: boolean;
   canAskAi?: boolean;
   canCurrentPagePreview?: boolean;
+  canSaveDocument?: boolean;
+  canDownloadPdf?: boolean;
   canDeleteDocument?: boolean;
 }>(), {
   canRename: true,
@@ -79,6 +85,8 @@ const props = withDefaults(defineProps<{
   canTranslate: true,
   canAskAi: true,
   canCurrentPagePreview: true,
+  canSaveDocument: true,
+  canDownloadPdf: true,
   canDeleteDocument: true,
   pdfParagraphActionsEnabled: true,
   pdfAuthorGraphEnabled: true,
@@ -100,6 +108,8 @@ const emit = defineEmits<{
   (event: "undo"): void;
   (event: "jumpToPage"): void;
   (event: "toggleSearch"): void;
+  (event: "saveDocument"): void;
+  (event: "downloadPdf"): void;
   (event: "openCurrentPagePreview"): void;
   (event: "showAnnotations"): void;
   (event: "deleteDocument"): void;
@@ -138,6 +148,8 @@ const emit = defineEmits<{
   (event: "dictionaryHover", payload: DictionaryHoverPreview): void;
   (event: "clearDictionaryHover"): void;
   (event: "paragraphAction", payload: { action: "translate" | "quote" | "askAi"; pageIndex: number; text: string; rectsPct: RectPct[]; position: { left: number; top: number; bottom?: number }; source: "paragraph" }): void;
+  (event: "formulaAskAi", candidate: import("@/services/FormulaAnalysisService").FormulaCandidate): void;
+  (event: "formulaAnalyze", candidate: import("@/services/FormulaAnalysisService").FormulaCandidate): void;
 }>();
 
 const scrollRef = ref<HTMLElement | null>(null);
@@ -201,6 +213,11 @@ watch(() => props.searchOpen, focusSearchInput);
           />
           <button v-else type="button" class="title-button" :title="t('pdf.rename')" :disabled="canRename === false" @click="emit('editTitle')">{{ documentTitle }}</button>
         </div>
+        <div class="pdf-title-actions">
+          <button type="button" class="pdf-title-search" :title="t('pdf.search')" :aria-label="t('pdf.search')" :class="{ active: searchOpen }" @click="emit('toggleSearch')"><Search :size="17" /></button>
+          <button type="button" class="pdf-title-save" :title="t('common.save')" :aria-label="t('common.save')" :disabled="canSaveDocument === false" @click="emit('saveDocument')"><Save :size="17" /></button>
+          <button type="button" class="pdf-title-download" :title="t('pdf.downloadPdf')" :aria-label="t('pdf.downloadPdf')" :disabled="canDownloadPdf === false" @click="emit('downloadPdf')"><Download :size="17" /></button>
+        </div>
       </div>
       <div class="pdf-action-row">
         <div class="toolbar-zone toolbar-zone-left">
@@ -226,9 +243,7 @@ watch(() => props.searchOpen, focusSearchInput);
         </div>
         <div class="toolbar-zone toolbar-zone-right">
           <div class="toolbar-group">
-            <button type="button" class="pdf-toolbar-search" :title="t('pdf.search')" :class="{ active: searchOpen }" @click="emit('toggleSearch')"><Search :size="17" /></button>
             <button type="button" class="pdf-toolbar-float-window" :title="t('pdf.currentPagePreview')" :disabled="canCurrentPagePreview === false" @click="emit('openCurrentPagePreview')"><PictureInPicture :size="17" /></button>
-            <button type="button" class="pdf-toolbar-delete" :title="t('pdf.deleteDocument')" :disabled="canDeleteDocument === false" @click="emit('deleteDocument')"><Trash2 :size="17" /></button>
             <div ref="pdfMoreToolsRoot" class="pdf-more-tools">
               <button ref="pdfMoreToolsTrigger" type="button" class="pdf-more-tools-trigger" :class="{ active: pdfMoreToolsOpen }" :title="t('pdf.moreTools')" @click="togglePdfMoreTools"><MoreHorizontal :size="17" /></button>
             </div>
@@ -249,10 +264,7 @@ watch(() => props.searchOpen, focusSearchInput);
         <button type="button" :title="t('pdf.translateSelection')" :disabled="!hasSelection || canTranslate === false" @click="runPdfMoreTool(() => emit('translate'))"><Languages :size="17" /><span>{{ t("pdf.translateSelection") }}</span></button>
         <button type="button" :title="t('pdf.askAiSelection')" :disabled="!hasSelection || canAskAi === false" @click="runPdfMoreTool(() => emit('askAi'))"><Bot :size="17" /><span>{{ t("pdf.askAiSelection") }}</span></button>
         <div class="pdf-more-tools-separator" />
-        <button type="button" :title="t('pdf.search')" :class="{ active: searchOpen }" @click="runPdfMoreTool(() => emit('toggleSearch'))"><Search :size="17" /><span>{{ t("pdf.search") }}</span></button>
         <button type="button" :title="t('pdf.currentPagePreview')" :disabled="canCurrentPagePreview === false" @click="runPdfMoreTool(() => emit('openCurrentPagePreview'))"><PictureInPicture :size="17" /><span>{{ t("pdf.currentPagePreview") }}</span></button>
-        <div class="pdf-more-tools-separator" />
-        <button type="button" class="danger" :title="t('pdf.deleteDocument')" :disabled="canDeleteDocument === false" @click="runPdfMoreTool(() => emit('deleteDocument'))"><Trash2 :size="17" /><span>{{ t("pdf.deleteDocument") }}</span></button>
       </div>
     </Teleport>
 
@@ -279,6 +291,7 @@ watch(() => props.searchOpen, focusSearchInput);
         v-for="page in pageNumbers"
         :key="page"
         :pdf-document="pdfDocument"
+        :document-id="documentId"
         :page-number="page"
         :scale-width="pageRenderWidth"
         :active-anchor="activeAnchor"
@@ -289,6 +302,8 @@ watch(() => props.searchOpen, focusSearchInput);
         :image-select-mode="annotationToolMode === 'image'"
         :author-profiles="authorProfiles"
         :dictionary-entries="dictionaryEntries"
+        :formulas="formulas || []"
+        :settings="settings"
         :capture-image-scale="captureImageScale"
         :pdf-paragraph-actions-enabled="pdfParagraphActionsEnabled !== false"
         :pdf-author-graph-enabled="pdfAuthorGraphEnabled !== false"
@@ -311,6 +326,8 @@ watch(() => props.searchOpen, focusSearchInput);
         @dictionary-hover="emit('dictionaryHover', { entry: $event.entry, anchor: $event.position })"
         @clear-dictionary-hover="emit('clearDictionaryHover')"
         @paragraph-action="emit('paragraphAction', $event)"
+        @formula-ask-ai="emit('formulaAskAi', $event)"
+        @formula-analyze="emit('formulaAnalyze', $event)"
       />
       <p v-if="error" class="error pdf-error">{{ error }}</p>
     </section>

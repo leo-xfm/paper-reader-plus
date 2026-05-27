@@ -352,6 +352,11 @@ function createMarkdownIt(renderOptions: Required<MarkdownRenderOptions>) {
   md.validateLink = isAllowedMarkdownUrl;
   md.enable(["table", "strikethrough"]);
 
+  md.renderer.rules.text = (tokens, idx) => {
+    return escapeHtml(tokens[idx].content).replace(/&lt;br\s*\/?&gt;/gi, (match) =>
+      `<span class="markdown-html-br-mark">${match}</span><br>`);
+  };
+
   const defaultFence = md.renderer.rules.fence || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
   md.renderer.rules.fence = (tokens, idx, options, env, self) => {
     const token = tokens[idx];

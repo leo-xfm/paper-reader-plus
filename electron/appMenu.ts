@@ -37,7 +37,8 @@ export type MenuAction =
   | "settings-network-proxy"
   | "settings-file-associations"
   | "settings-system-prompt"
-  | "settings-summary-prompt";
+  | "settings-summary-prompt"
+  | "settings-analysis-prompt";
 
 export function createApplicationMenu(
   sendMenuAction: (action: MenuAction) => void,
@@ -114,6 +115,7 @@ export function createApplicationMenu(
         { type: "separator" },
         { label: label("defaultSystemPrompt"), click: () => sendMenuAction("settings-system-prompt") },
         { label: label("defaultSummaryPrompt"), click: () => sendMenuAction("settings-summary-prompt") },
+        { label: label("defaultAnalysisPrompt"), click: () => sendMenuAction("settings-analysis-prompt") },
       ],
     },
     {

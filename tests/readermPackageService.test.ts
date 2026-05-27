@@ -122,6 +122,10 @@ describe("ReadermPackageService", () => {
         { document_id: "doc-3", anchor_id: "anc-3" },
       ],
       annotations: [{ document_id: "doc-2", annotation_id: "ann-2" }],
+      formulas: [
+        { formula_id: "f2", document_id: "doc-2", latex: "x+y", raw_text: "x+y", analysis: "Important.", source: "latex", importance_score: 0.9, status: "parsed", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" },
+        { formula_id: "f3", document_id: "doc-3", latex: "a+b", raw_text: "a+b", analysis: "Unreferenced.", source: "latex", importance_score: 0.9, status: "parsed", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" },
+      ],
       pdfDataByDocumentId: {
         "doc-2": Buffer.from("%PDF-2"),
         "doc-3": Buffer.from("%PDF-3"),
@@ -142,6 +146,7 @@ describe("ReadermPackageService", () => {
     expect(parsed.documents.map((document) => document.document_id)).toEqual(["readerm-1", "doc-2"]);
     expect(parsed.anchors).toEqual([{ document_id: "doc-2", anchor_id: "anc-2" }]);
     expect(parsed.annotations).toEqual([{ document_id: "doc-2", annotation_id: "ann-2" }]);
+    expect(parsed.formulas?.map((formula) => (formula as { formula_id: string }).formula_id)).toEqual(["f2"]);
     expect(parsed.pdfDataByDocumentId["doc-2"].toString()).toBe("%PDF-2");
     expect(parsed.pdfDataByDocumentId["doc-3"]).toBeUndefined();
     expect(parsed.assets[0].data.toString()).toBe("PNG");

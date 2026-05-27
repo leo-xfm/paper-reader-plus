@@ -8,6 +8,7 @@ import {
 } from "@codemirror/view";
 import { StateEffect, StateField, type EditorSelection, type EditorState, type Extension, type Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+import { findComplexTableRanges } from "@/services/ComplexTableService";
 import { decorateInline } from "./decorate/inline.js";
 import { decorateHeading } from "./decorate/heading.js";
 import { decorateBlockquote } from "./decorate/blockquote.js";
@@ -29,10 +30,11 @@ import { decorateHighlight } from "./decorate/highlight.js";
 import { decorateHtmlBlocks } from "./decorate/htmlBlock.js";
 import { decorateFontColor } from "./decorate/fontColor.js";
 import { decorateComplexTables } from "./decorate/complexTable.js";
-import { decorateBlockMath, decorateMath } from "./decorate/math.js";
+import { decorateHtmlBreaks } from "./decorate/lineBreak.js";
+import { blockMathSourceRanges, decorateBlockMath, decorateMath } from "./decorate/math.js";
 import { decorateUnderline } from "./decorate/underline.js";
 import { decorateTable, decorateTablesInRange } from "./decorate/table.js";
-import { HIDE } from "./decorate/shared.js";
+import { HIDE, rangeInsideAnyRange, type SourceRange } from "./decorate/shared.js";
 import type { UrlPolicy } from "./url.js";
 
 export interface SilkdownPluginOptions {
@@ -268,6 +270,21 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
         const mathEnabled = opts.mathEnabled !== false;
         const listFoldingEnabled = opts.listFoldingEnabled !== false;
         const collapsedListRanges: Array<{ from: number; to: number }> = [];
+        const excludedInlineRanges: SourceRange[] = mathEnabled && !disabled.has("Math")
+          ? blockMathSourceRanges(doc)
+          : [];
+        const htmlBreakExcludedRanges: SourceRange[] = [...excludedInlineRanges];
+        for (const table of findComplexTableRanges(doc.toString())) {
+          htmlBreakExcludedRanges.push({ from: table.start, to: table.end });
+        }
+        tree.iterate({
+          enter: (n) => {
+            if (n.name === "Table" || n.name === "FencedCode" || n.name === "InlineCode") {
+              htmlBreakExcludedRanges.push({ from: n.from, to: n.to });
+              return false;
+            }
+          },
+        });
 
         if (listFoldingEnabled && !disabled.has("ListItem")) {
           tree.iterate({
@@ -280,28 +297,34 @@ export function silkdownPlugin(opts: SilkdownPluginOptions = {}): Extension {
         }
         const isHiddenByCollapsedList = (from: number, to: number) =>
           collapsedListRanges.some((range) => from >= range.from && to <= range.to);
+        const isExcludedInlineRange = (from: number, to: number) =>
+          rangeInsideAnyRange(from, to, excludedInlineRanges);
 
         for (const { from, to } of view.visibleRanges) {
           if (mathEnabled && !disabled.has("Math")) {
             decorateMath(ranges, atomicRanges, doc, sel, from, to, liveBlockLabels);
           }
+          if (!disabled.has("HtmlBreak")) {
+            decorateHtmlBreaks(ranges, atomicRanges, doc, from, to, htmlBreakExcludedRanges);
+          }
           if (highlightEnabled && !disabled.has("Highlight")) {
-            decorateHighlight(ranges, atomicRanges, doc, sel, from, to);
+            decorateHighlight(ranges, atomicRanges, doc, sel, from, to, excludedInlineRanges);
           }
           if (!disabled.has("Image")) {
-            decorateSizedMarkdownImages(ranges, atomicRanges, doc, sel, from, to, urlPolicy, opts.link);
+            decorateSizedMarkdownImages(ranges, atomicRanges, doc, sel, from, to, urlPolicy, opts.link, excludedInlineRanges);
           }
           if (!disabled.has("Underline")) {
-            decorateUnderline(ranges, atomicRanges, doc, sel, from, to);
+            decorateUnderline(ranges, atomicRanges, doc, sel, from, to, excludedInlineRanges);
           }
           if (!disabled.has("FontColor")) {
-            decorateFontColor(ranges, atomicRanges, doc, sel, from, to);
+            decorateFontColor(ranges, atomicRanges, doc, sel, from, to, excludedInlineRanges);
           }
           tree.iterate({
             from,
             to,
             enter: (n) => {
               if (isHiddenByCollapsedList(n.from, n.to)) return false;
+              if (isExcludedInlineRange(n.from, n.to)) return false;
               if (disabled.has(n.name)) return false;
 
               if (HEADING_NODES.has(n.name)) {

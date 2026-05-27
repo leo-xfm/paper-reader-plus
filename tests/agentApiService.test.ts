@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAgentMessages, parseAgentStreamEvent, streamAgentChatDeltas } from "../electron/services/AgentApiService";
+import { buildAgentMessages, parseAgentStreamEvent, requestAgentChat, streamAgentChatDeltas } from "../electron/services/AgentApiService";
 import type { Settings } from "../electron/services/SettingsTypes";
 
 const settings: Settings = {
@@ -13,12 +13,17 @@ const settings: Settings = {
   research_area: "",
   reader_prompt: "",
   summary_template: "",
+  symbol_template: "",
+  formula_template: "",
+  formula_context_char_limit: 90000,
+  formula_candidate_limit: 180,
   copy_quote_template: "> {{ paragraph_content }}\n\nSource: {{ page_marker }}",
   quote_to_note_template: "{{ page_marker }}",
   quote_to_readerm_template: "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
   pdf_paragraph_actions_enabled: true,
   pdf_author_graph_enabled: true,
   pdf_internal_link_preview_enabled: true,
+  pdf_formula_hover_enabled: true,
   summary_source: "pdf-extractor",
   summary_text_char_limit: 120000,
   summary_figure_attachment_limit: 10,
@@ -246,6 +251,72 @@ describe("AgentApiService", () => {
     const prompt = messages.at(-1)?.content || "";
     expect(prompt).toContain("**Metaphor**");
     expect(prompt).toContain("Attention weights value vectors.");
+  });
+
+  it("uses the symbols j2 template with complete context fields", () => {
+    const messages = buildAgentMessages(settings, {
+      task: "symbols",
+      reader_context: {
+        document: { title: "Symbol Paper" },
+        note: "Important note.",
+        summary: "Existing summary.",
+        annotation_context: "Annotation 1: loss is highlighted.",
+        latex_content: "\\newcommand{\\loss}{L}",
+        symbol_source_mode: "latex",
+        summary_source: { content: "PDF full text without truncation marker." },
+        symbols: [{ symbol: "L", kind: "symbol", definition: "loss", source: "ai", confidence: 0.8 }],
+        evidences: [{
+          evidence_id: "ev-1",
+          document_id: "doc-1",
+          anchor_id: "anc-1",
+          page_index: 0,
+          href: "/reader?documentId=doc-1&anchor=anc-1&page=1",
+          quote: "L denotes loss",
+        }],
+      },
+    });
+    const prompt = messages.at(-1)?.content || "";
+    expect(prompt).toContain("Source mode: latex");
+    expect(prompt).toContain("PDF full text without truncation marker.");
+    expect(prompt).toContain("\\newcommand{\\loss}{L}");
+    expect(prompt).toContain("Annotation 1: loss is highlighted.");
+    expect(prompt).toContain("Current symbols:");
+    expect(prompt).toContain("Return only a strict JSON array");
+  });
+
+  it("uses the formula j2 template for AI formula selection and analysis", () => {
+    const messages = buildAgentMessages(settings, {
+      task: "formula",
+      reader_context: {
+        document: { title: "Formula Paper" },
+        note: "Formula notes.",
+        summary: "Formula summary.",
+        formula_mode: "batch",
+        formula_candidates: JSON.stringify([{ candidate_id: "c1", raw_text: "L = x + y", context: "loss definition" }]),
+        symbols: [{ symbol: "L", kind: "symbol", definition: "loss", source: "ai", confidence: 0.8 }],
+      },
+    });
+    const prompt = messages.at(-1)?.content || "";
+    expect(prompt).toContain("Full Text / Formula Source Blocks");
+    expect(prompt).toContain("extract formulas yourself");
+    expect(prompt).toContain("Return only a strict JSON array");
+    expect(prompt).toContain("c1");
+  });
+
+  it("reports network failures with actionable AI request context", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed", { cause: new Error("read ECONNRESET") });
+    }));
+    await expect(requestAgentChat(settings, {
+      task: "formula",
+      messages: [],
+      reader_context: { document: { title: "Formula Paper" } },
+    })).rejects.toThrow("Check the Agent API URL");
+    await expect(requestAgentChat(settings, {
+      task: "formula",
+      messages: [],
+      reader_context: { document: { title: "Formula Paper" } },
+    })).rejects.toThrow("read ECONNRESET");
   });
 
   it("parses streaming chat completion delta events", () => {

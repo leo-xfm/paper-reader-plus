@@ -47,6 +47,7 @@ type MenuKey =
   | "fileAssociations"
   | "defaultSystemPrompt"
   | "defaultSummaryPrompt"
+  | "defaultAnalysisPrompt"
   | "help"
   | "openHelp"
   | "openApiGuide";
@@ -58,7 +59,10 @@ type DialogKey =
   | "button.deleteRecordOnly"
   | "button.dontSave"
   | "button.fromLatex"
+  | "button.fromAiPdf"
+  | "button.fromAiLatex"
   | "button.fromLoadedPdf"
+  | "button.complete"
   | "button.keepAnchors"
   | "button.keepUserChanges"
   | "button.ok"
@@ -80,6 +84,8 @@ type DialogKey =
   | "dialog.saveTab.message"
   | "dialog.symbolRefreshMode.detail"
   | "dialog.symbolRefreshMode.message"
+  | "dialog.symbolAiApplyMode.detail"
+  | "dialog.symbolAiApplyMode.message"
   | "dialog.symbolRefreshSource.detail"
   | "dialog.symbolRefreshSource.message";
 
@@ -127,6 +133,7 @@ const menuMessages: Record<ResolvedMenuLanguage, Partial<Record<MenuKey, string>
     fileAssociations: "File Associations",
     defaultSystemPrompt: "Default System Prompt",
     defaultSummaryPrompt: "Default Summary Prompt",
+    defaultAnalysisPrompt: "Default Analysis Prompt",
     help: "Help",
     openHelp: "Open Help",
     openApiGuide: "API Guide",
@@ -174,13 +181,14 @@ const menuMessages: Record<ResolvedMenuLanguage, Partial<Record<MenuKey, string>
     fileAssociations: "文件关联",
     defaultSystemPrompt: "默认系统提示词",
     defaultSummaryPrompt: "默认摘要提示词",
+    defaultAnalysisPrompt: "默认解析提示词",
     help: "帮助",
     openHelp: "打开帮助",
     openApiGuide: "API 调用指南",
   },
 };
 
-const dialogMessages: Record<ResolvedMenuLanguage, Record<DialogKey, string>> = {
+const dialogMessages: Record<ResolvedMenuLanguage, Partial<Record<DialogKey, string>>> = {
   "en-US": {
     "button.cancel": "Cancel",
     "button.cleanUp": "Clean up",
@@ -188,7 +196,10 @@ const dialogMessages: Record<ResolvedMenuLanguage, Record<DialogKey, string>> = 
     "button.deleteRecordOnly": "Delete record only",
     "button.dontSave": "Don't Save",
     "button.fromLatex": "From LaTeX",
+    "button.fromAiPdf": "From AI (PDF source)",
+    "button.fromAiLatex": "From AI (LaTeX source)",
     "button.fromLoadedPdf": "From loaded PDF",
+    "button.complete": "Complete missing",
     "button.keepAnchors": "Keep anchors",
     "button.keepUserChanges": "Keep user changes",
     "button.ok": "OK",
@@ -210,6 +221,8 @@ const dialogMessages: Record<ResolvedMenuLanguage, Record<DialogKey, string>> = 
     "dialog.saveTab.message": "Save before closing file?",
     "dialog.symbolRefreshMode.detail": "Keep favorites, edited definitions, and deleted symbols, or fully reset the symbol tracker before regenerating.",
     "dialog.symbolRefreshMode.message": "Existing symbol changes found",
+    "dialog.symbolAiApplyMode.detail": "Choose whether AI results should only add missing symbols and empty definitions, or replace the visible symbol list.",
+    "dialog.symbolAiApplyMode.message": "Apply AI symbol results?",
     "dialog.symbolRefreshSource.detail": "Choose the source used to regenerate symbol definitions.",
     "dialog.symbolRefreshSource.message": "Regenerate symbol tracker?",
   },
@@ -262,6 +275,6 @@ export function menuLabelKeys() {
 }
 
 export function dialogLabel(language: MenuLanguage | undefined, key: DialogKey, params: Record<string, string | number> = {}) {
-  const template = dialogMessages[resolveMenuLanguage(language)][key] || dialogMessages["en-US"][key] || key;
+  const template = String(dialogMessages[resolveMenuLanguage(language)][key] || dialogMessages["en-US"][key] || key);
   return template.replace(/\{(\w+)\}/g, (_match, name: string) => String(params[name] ?? ""));
 }

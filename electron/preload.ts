@@ -34,7 +34,8 @@ type MenuAction =
   | "settings-network-proxy"
   | "settings-file-associations"
   | "settings-system-prompt"
-  | "settings-summary-prompt";
+  | "settings-summary-prompt"
+  | "settings-analysis-prompt";
 
 type AiChatStreamCallbacks = {
   onDelta?: (delta: string) => void;
@@ -86,11 +87,13 @@ contextBridge.exposeInMainWorld("paperReaderPlus", {
   updateDocumentViewState: (documentId: string, viewState: unknown) => ipcRenderer.invoke("documents:update-view-state", documentId, viewState),
   getDocumentHealth: (documentId: string) => ipcRenderer.invoke("documents:get-health", documentId),
   getPdfData: (documentId: string) => ipcRenderer.invoke("documents:get-pdf-data", documentId),
+  exportPdf: (documentId: string) => ipcRenderer.invoke("documents:export-pdf", documentId),
   updateDocumentTitle: (documentId: string, title: string) => ipcRenderer.invoke("documents:update-title", documentId, title),
   attachLatexSource: (documentId: string) => ipcRenderer.invoke("documents:attach-latex", documentId),
   getLatexSource: (documentId: string) => ipcRenderer.invoke("documents:get-latex-source", documentId),
   confirmDeleteDocument: (title: string, fileName: string) => ipcRenderer.invoke("documents:confirm-delete", title, fileName),
   confirmSymbolRefreshSource: () => ipcRenderer.invoke("symbols:confirm-refresh-source"),
+  confirmSymbolAiApplyMode: () => ipcRenderer.invoke("symbols:confirm-ai-apply-mode"),
   confirmSymbolRefreshMode: () => ipcRenderer.invoke("symbols:confirm-refresh-mode"),
   showDocumentContextMenu: (documentId: string) => ipcRenderer.invoke("documents:show-context-menu", documentId),
   openDocumentFile: (documentId: string) => ipcRenderer.invoke("documents:open-file", documentId),
@@ -101,6 +104,8 @@ contextBridge.exposeInMainWorld("paperReaderPlus", {
   saveNote: (documentId: string, content: string) => ipcRenderer.invoke("notes:save", documentId, content),
   saveSummary: (documentId: string, content: string) => ipcRenderer.invoke("summary:save", documentId, content),
   saveSymbols: (documentId: string, symbols: unknown) => ipcRenderer.invoke("symbols:save", documentId, symbols),
+  listFormulas: (documentId: string) => ipcRenderer.invoke("formulas:list", documentId),
+  saveFormulas: (documentId: string, formulas: unknown) => ipcRenderer.invoke("formulas:save", documentId, formulas),
   listParagraphTranslations: (documentId: string) => ipcRenderer.invoke("paragraph-translations:list", documentId),
   saveParagraphTranslation: (documentId: string, entry: unknown) => ipcRenderer.invoke("paragraph-translations:save", documentId, entry),
   importImageAsset: (documentId: string) => ipcRenderer.invoke("assets:import-image", documentId),

@@ -85,6 +85,23 @@ function cleanQuoteTemplate(value: unknown, fallback: string) {
   return template.trim() ? template.slice(0, 20000) : fallback;
 }
 
+function cleanLongPromptTemplate(value: unknown, fallback: string) {
+  const template = typeof value === "string" ? value : "";
+  return template.trim() ? template : fallback;
+}
+
+function clampFormulaContextCharLimit(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 90000;
+  return Math.min(2000000, Math.max(10000, Math.trunc(numeric)));
+}
+
+function clampFormulaCandidateLimit(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 180;
+  return Math.min(1000, Math.max(20, Math.trunc(numeric)));
+}
+
 function cleanSimpleTexToken(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -162,6 +179,12 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
       summary_figure_attachment_limit: ctx.clampSummaryFigureAttachmentLimit(
         patch.summary_figure_attachment_limit ?? current.summary_figure_attachment_limit,
       ),
+      formula_context_char_limit: clampFormulaContextCharLimit(
+        patch.formula_context_char_limit ?? current.formula_context_char_limit,
+      ),
+      formula_candidate_limit: clampFormulaCandidateLimit(
+        patch.formula_candidate_limit ?? current.formula_candidate_limit,
+      ),
       capture_image_scale: clampCaptureImageScale(patch.capture_image_scale ?? current.capture_image_scale),
       markdown_default_font_size: clampMarkdownDefaultFontSize(patch.markdown_default_font_size ?? current.markdown_default_font_size),
       markdown_line_height: clampMarkdownLineHeight(patch.markdown_line_height ?? current.markdown_line_height),
@@ -200,9 +223,18 @@ export function registerSettingsAiIpc(ctx: IpcContext) {
         patch.quote_to_readerm_template ?? current.quote_to_readerm_template,
         "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
       ),
+      symbol_template: cleanLongPromptTemplate(
+        patch.symbol_template ?? current.symbol_template,
+        current.symbol_template,
+      ),
+      formula_template: cleanLongPromptTemplate(
+        patch.formula_template ?? current.formula_template,
+        current.formula_template,
+      ),
       pdf_paragraph_actions_enabled: patch.pdf_paragraph_actions_enabled === undefined ? current.pdf_paragraph_actions_enabled : patch.pdf_paragraph_actions_enabled !== false,
       pdf_author_graph_enabled: patch.pdf_author_graph_enabled === undefined ? current.pdf_author_graph_enabled : patch.pdf_author_graph_enabled !== false,
       pdf_internal_link_preview_enabled: patch.pdf_internal_link_preview_enabled === undefined ? current.pdf_internal_link_preview_enabled : patch.pdf_internal_link_preview_enabled !== false,
+      pdf_formula_hover_enabled: false,
       ai_send_notes_context: patch.ai_send_notes_context !== false,
       ai_send_summary_context: patch.ai_send_summary_context !== false,
       ai_send_annotations_context: patch.ai_send_annotations_context !== false,

@@ -106,8 +106,10 @@ function columnWidths(source: string) {
 }
 
 function cellText(source: string) {
-  return unescapeHtml(source.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, ""))
+  const breakToken = "__PRP_BR__";
+  return unescapeHtml(source.replace(/<br\s*\/?>/gi, breakToken).replace(/<[^>]+>/g, "").replaceAll(breakToken, "<br>"))
     .replace(/\r?\n/g, " ")
+    .replace(/\s*<br>\s*/gi, "<br>")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -267,6 +269,10 @@ function cellAttrs(cell: ComplexTableCell) {
   return attrs.length ? ` ${attrs.join(" ")}` : "";
 }
 
+function escapeTableCellHtml(value: string) {
+  return escapeHtml(value).replace(/&lt;br\s*\/?&gt;/gi, "<br>");
+}
+
 export function serializeComplexTable(table: Pick<ComplexTable, "width" | "rows"> & Partial<Pick<ComplexTable, "columnWidths">>) {
   const width = table.width.trim() || "100%";
   const lines = [`<table class="markdown-complex-table" style="width: ${escapeHtml(width)};">`];
@@ -284,7 +290,7 @@ export function serializeComplexTable(table: Pick<ComplexTable, "width" | "rows"
   const headRows = firstBodyRow <= 0 ? table.rows.slice(0, 1) : table.rows.slice(0, firstBodyRow);
   const bodyRows = table.rows.slice(headRows.length);
   const renderRows = (rows: ComplexTableCell[][]) => rows.map((row) =>
-    `    <tr>\n${row.map((cell) => `      <${cell.tag}${cellAttrs(cell)}>${escapeHtml(cell.text)}</${cell.tag}>`).join("\n")}\n    </tr>`);
+    `    <tr>\n${row.map((cell) => `      <${cell.tag}${cellAttrs(cell)}>${escapeTableCellHtml(cell.text)}</${cell.tag}>`).join("\n")}\n    </tr>`);
   if (headRows.length) lines.push("  <thead>", ...renderRows(headRows), "  </thead>");
   if (bodyRows.length) lines.push("  <tbody>", ...renderRows(bodyRows), "  </tbody>");
   lines.push("</table>");

@@ -52,6 +52,13 @@ function readerEvidences(payload: AgentChatPayload) {
     : [];
 }
 
+function readerSymbols(payload: AgentChatPayload) {
+  const readerContext = payload.reader_context;
+  return isRecord(readerContext) && Array.isArray(readerContext.symbols)
+    ? readerContext.symbols.filter(isRecord)
+    : [];
+}
+
 function evidenceListMarkdown(payload: AgentChatPayload) {
   const evidences = readerEvidences(payload);
   if (!evidences.length) return "Evidence: Needs verification";
@@ -68,6 +75,33 @@ function evidenceListMarkdown(payload: AgentChatPayload) {
       ].filter(Boolean).join("\n");
     })
     .join("\n");
+}
+
+function currentSymbolListMarkdown(payload: AgentChatPayload) {
+  const symbols = readerSymbols(payload);
+  if (!symbols.length) return "(none)";
+  return symbols
+    .map((symbol, index) => {
+      const pageIndex = typeof symbol.page_index === "number" ? symbol.page_index : null;
+      const kind = symbol.kind === "abbreviation" ? "abbreviation" : "symbol";
+      const name = typeof symbol.symbol === "string" ? symbol.symbol : "";
+      const source = typeof symbol.source === "string" ? symbol.source : "unknown";
+      const definition = typeof symbol.definition === "string" ? symbol.definition : "";
+      const paragraph = typeof symbol.paragraph === "string" ? symbol.paragraph : "";
+      return [
+        `${index + 1}. ${name} (${kind}, source: ${source}${pageIndex === null ? "" : `, page: ${pageIndex + 1}`})`,
+        `   Definition: ${definition || "(empty)"}`,
+        paragraph ? `   Context: ${paragraph}` : "",
+      ].filter(Boolean).join("\n");
+    })
+    .join("\n");
+}
+
+function annotationContext(payload: AgentChatPayload) {
+  const readerContext = payload.reader_context;
+  if (isRecord(readerContext) && typeof readerContext.annotation_context === "string") return readerContext.annotation_context;
+  const evidences = readerEvidences(payload);
+  return evidences.length ? evidenceListMarkdown(payload) : "(none)";
 }
 
 function documentTitle(payload: AgentChatPayload) {
@@ -89,6 +123,14 @@ function templateValues(settings: Settings, payload: AgentChatPayload): Template
   const sourceLabel = typeof source?.label === "string" ? source.label : "Reader evidence / loaded pages";
   const notes = isRecord(readerContext) && typeof readerContext.note === "string" ? readerContext.note : "";
   const summary = isRecord(readerContext) && typeof readerContext.summary === "string" ? readerContext.summary : "";
+  const latexContent = isRecord(readerContext) && typeof readerContext.latex_content === "string" ? readerContext.latex_content : "";
+  const symbolSourceMode = isRecord(readerContext) && readerContext.symbol_source_mode === "latex" ? "latex" : "pdf";
+  const formulaMode = isRecord(readerContext) && readerContext.formula_mode === "batch" ? "batch" : "single";
+  const formulaLatex = isRecord(readerContext) && typeof readerContext.formula_latex === "string" ? readerContext.formula_latex : "";
+  const formulaRawText = isRecord(readerContext) && typeof readerContext.formula_raw_text === "string" ? readerContext.formula_raw_text : "";
+  const formulaContext = isRecord(readerContext) && typeof readerContext.formula_context === "string" ? readerContext.formula_context : "";
+  const formulaSourceLabel = isRecord(readerContext) && typeof readerContext.formula_source_label === "string" ? readerContext.formula_source_label : "";
+  const formulaCandidates = isRecord(readerContext) && typeof readerContext.formula_candidates === "string" ? readerContext.formula_candidates : "";
   const loaded = loadedText(payload);
   return {
     professional_field: settings.professional_field?.trim() || "computer-science research",
@@ -97,8 +139,18 @@ function templateValues(settings: Settings, payload: AgentChatPayload): Template
     document_title: documentTitle(payload),
     page_label: pageLabel(payload),
     paper_content: payload.task === "summary" ? loaded : selectedText(payload) || loaded,
+    latex_content: latexContent,
     loaded_text_context: loaded || "(no loaded text context)",
     evidence_list: evidenceListMarkdown(payload),
+    annotation_context: annotationContext(payload),
+    current_symbol_list: currentSymbolListMarkdown(payload),
+    symbol_source_mode: symbolSourceMode,
+    formula_mode: formulaMode,
+    formula_latex: formulaLatex,
+    formula_raw_text: formulaRawText,
+    formula_context: formulaContext,
+    formula_source_label: formulaSourceLabel,
+    formula_candidates: formulaCandidates,
     notes: notes || "(none)",
     current_summary: summary || "(none)",
     summary_source_mode: sourceMode,
@@ -114,6 +166,8 @@ function taskTemplate(settings: Settings, payload: AgentChatPayload) {
   if (payload.task === "summary") return settings.summary_template?.trim() || readTemplate("literature-read");
   if (payload.task === "translate") return readTemplate("literature-translate");
   if (payload.task === "metaphor") return readTemplate("literature-metaphor");
+  if (payload.task === "symbols") return settings.symbol_template?.trim() || readTemplate("literature-symbols");
+  if (payload.task === "formula") return settings.formula_template?.trim() || readTemplate("literature-formula");
   return "";
 }
 
@@ -263,6 +317,21 @@ function textOnlyAgentRequestBody(settings: Settings, payload: AgentChatPayload,
   };
 }
 
+function agentFetchErrorMessage(cause: unknown) {
+  const error = cause instanceof Error ? cause : null;
+  const nested = error?.cause instanceof Error ? error.cause : null;
+  const reason = nested?.message || error?.message || String(cause);
+  return `AI request failed before the server returned a response. Check the Agent API URL, API key, proxy, and network connection.${reason ? ` Cause: ${reason}` : ""}`;
+}
+
+async function fetchAgentCompletion(endpoint: string, init: RequestInit) {
+  try {
+    return await fetch(endpoint, init);
+  } catch (cause) {
+    throw new Error(agentFetchErrorMessage(cause));
+  }
+}
+
 export async function requestAgentChat(settings: Settings, payload: AgentChatPayload) {
   if (!settings.ai_api_key) throw new Error("AI API key is not configured.");
   if (settings.agent_api_type !== "chat") throw new Error("Only chat agent API is currently supported.");
@@ -271,7 +340,7 @@ export async function requestAgentChat(settings: Settings, payload: AgentChatPay
     throw new Error("PDF direct summary is not supported by the configured agent provider.");
   }
   const endpoint = `${settings.ai_base_url.replace(/\/$/, "")}/chat/completions`;
-  const response = await fetch(endpoint, {
+  const response = await fetchAgentCompletion(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -282,7 +351,7 @@ export async function requestAgentChat(settings: Settings, payload: AgentChatPay
   if (!response.ok) {
     const text = await response.text();
     if (hasImageContent(body.messages)) {
-      const retry = await fetch(endpoint, {
+      const retry = await fetchAgentCompletion(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -302,7 +371,7 @@ export async function* streamAgentChatDeltas(settings: Settings, payload: AgentC
   if (settings.agent_api_type !== "chat") throw new Error("Only chat agent API is currently supported.");
   const endpoint = `${settings.ai_base_url.replace(/\/$/, "")}/chat/completions`;
   const body = agentRequestBody(settings, payload, true);
-  let response = await fetch(endpoint, {
+  let response = await fetchAgentCompletion(endpoint, {
     method: "POST",
     signal: options.signal,
     headers: {
@@ -314,7 +383,7 @@ export async function* streamAgentChatDeltas(settings: Settings, payload: AgentC
   if (!response.ok) {
     const text = await response.text();
     if (hasImageContent(body.messages)) {
-      response = await fetch(endpoint, {
+      response = await fetchAgentCompletion(endpoint, {
         method: "POST",
         signal: options.signal,
         headers: {

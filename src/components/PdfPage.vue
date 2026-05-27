@@ -4,13 +4,14 @@ import AnnotationOverlay from "@/components/AnnotationOverlay.vue";
 import PdfCanvasPage from "@/components/PdfCanvasPage.vue";
 import PdfAuthorLayer from "@/components/PdfAuthorLayer.vue";
 import PdfDictionaryLayer from "@/components/PdfDictionaryLayer.vue";
+import PdfFormulaLayer from "@/components/PdfFormulaLayer.vue";
 import PdfLinkLayer from "@/components/PdfLinkLayer.vue";
 import PdfParagraphActionLayer from "@/components/PdfParagraphActionLayer.vue";
 import PdfReferenceLayer from "@/components/PdfReferenceLayer.vue";
 import { useI18n } from "@/i18n";
 import PdfTextLayer from "@/components/PdfTextLayer.vue";
 import type { PdfDocumentProxyLike, PdfLinkAnnotation, PdfPageMetrics, PdfReferenceCandidate, PdfSearchMatch, PdfTextItem } from "@/pdf/pdfTypes";
-import type { Anchor, Annotation, AuthorProfile, DictionaryEntry, RectPct } from "@/types";
+import type { Anchor, Annotation, AuthorProfile, DictionaryEntry, FormulaAnalysis, RectPct, Settings } from "@/types";
 
 const props = withDefaults(defineProps<{
   pdfDocument: PdfDocumentProxyLike | null;
@@ -24,6 +25,9 @@ const props = withDefaults(defineProps<{
   imageSelectMode?: boolean;
   authorProfiles?: AuthorProfile[];
   dictionaryEntries?: DictionaryEntry[];
+  documentId?: string;
+  formulas?: FormulaAnalysis[];
+  settings?: Settings | null;
   captureImageScale?: number;
   canTranslate?: boolean;
   canAskAi?: boolean;
@@ -39,6 +43,7 @@ const props = withDefaults(defineProps<{
 });
 
 const { t } = useI18n();
+const pdfFormulaHoverLayerEnabled = false;
 
 const emit = defineEmits<{
   (event: "selection", payload: { pageIndex: number; text: string; rectsPct: RectPct[]; font?: { font_name: string; font_size: number }; position: { left: number; top: number; bottom?: number } }): void;
@@ -57,6 +62,8 @@ const emit = defineEmits<{
   (event: "dictionaryHover", payload: { entry: DictionaryEntry; position: { left: number; top: number } }): void;
   (event: "clearDictionaryHover"): void;
   (event: "paragraphAction", payload: { action: "translate" | "quote" | "askAi"; pageIndex: number; text: string; rectsPct: RectPct[]; position: { left: number; top: number; bottom?: number }; source: "paragraph" }): void;
+  (event: "formulaAskAi", candidate: import("@/services/FormulaAnalysisService").FormulaCandidate): void;
+  (event: "formulaAnalyze", candidate: import("@/services/FormulaAnalysisService").FormulaCandidate): void;
 }>();
 
 const pageRef = ref<HTMLElement | null>(null);
@@ -289,6 +296,17 @@ function cancelImageSelection() {
       :can-translate="canTranslate !== false"
       :can-ask-ai="canAskAi !== false"
       @paragraph-action="emit('paragraphAction', $event)"
+    />
+    <PdfFormulaLayer
+      v-if="pdfFormulaHoverLayerEnabled && canvasRendered && pageTextItems.length && !imageSelectMode && settings?.pdf_formula_hover_enabled === true && documentId"
+      :document-id="documentId"
+      :page-index="pageIndex"
+      :text-items="pageTextItems"
+      :metrics="metrics"
+      :formulas="formulas || []"
+      :settings="settings"
+      @ask-ai="emit('formulaAskAi', $event)"
+      @analyze="emit('formulaAnalyze', $event)"
     />
     <AnnotationOverlay
       v-if="canvasRendered"

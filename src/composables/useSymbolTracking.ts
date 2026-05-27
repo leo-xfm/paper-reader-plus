@@ -3,11 +3,13 @@ import type { I18nKey } from "@/i18n";
 import type { PdfTextItem } from "@/pdf/pdfTypes";
 import { toIpcPlainObject } from "@/services/IpcPayloadService";
 import {
+  applyAiSymbolCompletion,
   applySymbolRefresh,
   extractSymbolsFromLatexWithProgress,
   extractSymbolsFromPdfPages,
   mergeSymbolDefinitions,
   normalizeSymbol,
+  parseAiSymbolDefinitions,
   type SymbolExtractionProgress,
 } from "@/services/SymbolTrackerService";
 import type { DocumentContext, SymbolDefinition } from "@/types";
@@ -18,6 +20,7 @@ type UseSymbolTrackingOptions = {
   savedSymbols: Ref<SymbolDefinition[]>;
   latexSymbols: Ref<SymbolDefinition[]>;
   pageTextItems: Ref<Record<number, PdfTextItem[]>>;
+  requestAiSymbols?: (source: "pdf" | "latex") => Promise<string>;
   showNotice: (message: string) => void;
   t: (key: I18nKey, params?: Record<string, string | number>) => string;
 };
@@ -103,6 +106,24 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
     void persistSymbols(options.context.value?.document.document_id || "", options.savedSymbols.value);
   }
 
+  async function refreshSymbolsFromAi(documentId: string, source: "pdf" | "latex") {
+    if (!options.requestAiSymbols) throw new Error("AI symbol tracking is not available.");
+    symbolRefreshProgress.value = { status: options.t("symbol.progress.aiAnalyzing"), percent: 8 };
+    const response = await options.requestAiSymbols(source);
+    symbolRefreshProgress.value = { status: options.t("symbol.progress.finalizing"), percent: 82 };
+    const generated = parseAiSymbolDefinitions(response);
+    if (!generated.length) throw new Error("AI did not return any valid symbols.");
+    const mode = await window.paperReaderPlus.confirmSymbolAiApplyMode();
+    if (!mode) return;
+    symbolRefreshProgress.value = { status: options.t("symbol.progress.saving"), percent: 96 };
+    options.latexSymbols.value = [];
+    options.savedSymbols.value = mode === "replace"
+      ? applySymbolRefresh([], generated, "reset")
+      : applyAiSymbolCompletion(options.savedSymbols.value, generated);
+    await persistSymbols(documentId, options.savedSymbols.value);
+    options.showNotice(options.t("symbol.refreshed", { count: generated.length }));
+  }
+
   async function refreshSymbols() {
     if (!options.context.value || symbolRefreshProgress.value) return;
     const documentId = options.context.value.document.document_id;
@@ -118,6 +139,15 @@ export function useSymbolTracking(options: UseSymbolTrackingOptions) {
       }
 
       let generated: SymbolDefinition[] = [];
+      if (source === "ai-pdf" || source === "ai-latex") {
+        if (source === "ai-latex" && !options.context.value.document.latex_path) {
+          options.showNotice(options.t("app.attachLatexFirst"));
+          return;
+        }
+        await refreshSymbolsFromAi(documentId, source === "ai-latex" ? "latex" : "pdf");
+        return;
+      }
+
       if (source === "latex") {
         if (!options.context.value.document.latex_path) {
           options.showNotice(options.t("app.attachLatexFirst"));

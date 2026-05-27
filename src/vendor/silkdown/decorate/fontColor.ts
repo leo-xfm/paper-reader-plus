@@ -1,7 +1,7 @@
 import { Decoration } from "@codemirror/view";
 import type { EditorSelection, Range, Text } from "@codemirror/state";
 import { selectionTouchesRange } from "../util/selection.js";
-import { pushRevealableMark } from "./shared.js";
+import { pushRevealableMark, rangeIntersectsAnyRange, type SourceRange } from "./shared.js";
 
 const FONT_COLOR_PATTERN = /<span\s+style=(["'])color:\s*(#[0-9a-f]{6}|black|red|green|blue|purple)\s*;?\1>([^\n]*?\S[^\n]*?)<\/span>/gi;
 
@@ -12,6 +12,7 @@ export function decorateFontColor(
   sel: EditorSelection,
   from: number,
   to: number,
+  excludedRanges: readonly SourceRange[] = [],
 ): void {
   const fromLine = doc.lineAt(from).number;
   const toLine = doc.lineAt(to).number;
@@ -25,6 +26,7 @@ export function decorateFontColor(
       const contentStart = start + match[0].indexOf(content);
       const contentEnd = contentStart + content.length;
       if (contentStart >= contentEnd) continue;
+      if (rangeIntersectsAnyRange(start, end, excludedRanges)) continue;
       const revealed = selectionTouchesRange(sel, start, end);
       ranges.push(Decoration.mark({ class: "sd-font-color", attributes: { style: `color: ${match[2]};` } }).range(contentStart, contentEnd));
       pushRevealableMark(ranges, atomicRanges, revealed, start, contentStart);

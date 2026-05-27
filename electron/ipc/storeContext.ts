@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { app, BrowserWindow, dialog } from "electron";
 import { createReaderPackageBuffer, extractAssetPathsFromMarkdown, type ReaderPackageAssetInput } from "../ReaderPackageService.js";
 import { resolveReadermReferences } from "../services/ReadermPackageService.js";
-import { migrateStoreToV3, STORE_SCHEMA_VERSION, type StoredAnchor, type StoredAnnotation, type StoredDocumentViewState, type StoredParagraphTranslation } from "../storeMigration.js";
+import { migrateStoreToV3, STORE_SCHEMA_VERSION, type StoredAnchor, type StoredAnnotation, type StoredDocumentViewState, type StoredFormulaAnalysis, type StoredParagraphTranslation } from "../storeMigration.js";
 import { findDocsService, readDocsKeyConfig, readTemplate } from "../services/DocsConfigService.js";
 import type { Settings } from "../services/SettingsTypes.js";
 
@@ -51,7 +51,7 @@ export type StoredSymbolDefinition = {
   normalized_symbol: string;
   kind: "symbol" | "abbreviation";
   definition: string;
-  source: "latex" | "pdf" | "grobid";
+  source: "latex" | "pdf" | "grobid" | "ai";
   page_index?: number;
   rects_pct?: Array<{ left: number; top: number; width: number; height: number }>;
   paragraph?: string;
@@ -72,6 +72,7 @@ export type StoredData = {
   annotations: StoredAnnotation[];
   ai_history: Record<string, Array<{ role: "user" | "assistant"; content: string; [key: string]: unknown }>>;
   symbols: Record<string, StoredSymbolDefinition[]>;
+  formulas: Record<string, StoredFormulaAnalysis[]>;
   assets: StoredAsset[];
   dictionary: DictionaryEntry[];
   paragraph_translations: Record<string, StoredParagraphTranslation[]>;
@@ -90,6 +91,7 @@ type ReaderPackageSaveOptions = {
   anchors: unknown[];
   annotations: unknown[];
   symbols?: unknown[];
+  formulas?: unknown[];
   pdfData?: Buffer;
   pdfDataByDocumentId?: Record<string, Buffer>;
   latexData?: Buffer;
@@ -137,12 +139,17 @@ function defaultSettings(): Settings {
     research_area: "",
     reader_prompt: readTemplate("system"),
     summary_template: readTemplate("literature-read"),
+    symbol_template: readTemplate("literature-symbols"),
+    formula_template: readTemplate("literature-formula"),
+    formula_context_char_limit: 90000,
+    formula_candidate_limit: 180,
     copy_quote_template: "> {{ paragraph_content }}\n\nSource: {{ page_marker }}",
     quote_to_note_template: "{{ page_marker }}",
     quote_to_readerm_template: "[{{ passage_name }}, p.{{ page_number }}]({{ href }})",
     pdf_paragraph_actions_enabled: true,
     pdf_author_graph_enabled: true,
     pdf_internal_link_preview_enabled: true,
+    pdf_formula_hover_enabled: false,
     summary_source: "pdf-extractor",
     summary_text_char_limit: 120000,
     summary_figure_attachment_limit: 10,
@@ -199,6 +206,7 @@ function emptyStore(): StoredData {
     annotations: [],
     ai_history: {},
     symbols: {},
+    formulas: {},
     assets: [],
     dictionary: [],
     paragraph_translations: {},
@@ -268,6 +276,7 @@ export function initStorage() {
   store = migrateStoreToV3(parsed) as StoredData;
   store.ai_history ||= {};
   store.symbols ||= {};
+  store.formulas ||= {};
   store.assets ||= [];
   store.dictionary ||= [];
   store.paragraph_translations ||= {};
@@ -404,7 +413,7 @@ export function cleanDocumentViewState(value: unknown): StoredDocumentViewState 
     zoom: cleanFiniteNumber(pdfSource.zoom, 0.1, 10),
   });
   const reader_panel = compactRecord({
-    active_tab: cleanMode(readerPanelSource.active_tab, ["annotations", "notes", "summary", "symbols", "ai"]),
+    active_tab: cleanMode(readerPanelSource.active_tab, ["annotations", "notes", "summary", "symbols", "formulas", "ai"]),
     collapsed: cleanBoolean(readerPanelSource.collapsed),
     width: cleanFiniteNumber(readerPanelSource.width, 180, 2000),
     notes_mode: cleanMode(readerPanelSource.notes_mode, ["edit", "live", "preview"]),
@@ -509,6 +518,7 @@ export async function saveReaderPackageForDocument(options: ReaderPackageSaveOpt
     anchors: options.anchors,
     annotations: options.annotations,
     symbols: options.symbols,
+    formulas: options.formulas,
     pdfData: options.pdfData,
     pdfDataByDocumentId: options.pdfDataByDocumentId,
     latexData: options.latexData,
@@ -544,6 +554,7 @@ export function createIpcContext(window: BrowserWindow) {
     listAnnotations,
     listAssets,
     listSymbols: (documentId: string) => store.symbols[documentId] || [],
+    listFormulas: (documentId: string) => store.formulas[documentId] || [],
     listParagraphTranslations: (documentId: string) => store.paragraph_translations[documentId] || [],
     documentAssetDir,
     createAssetRecordAsync,

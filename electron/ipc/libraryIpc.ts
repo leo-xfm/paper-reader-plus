@@ -8,6 +8,7 @@ import { arxivProgress, extractArxivLatexSource, fetchArxivBuffer, normalizeArxi
 import { normalizeMarkdownAssetPath } from "../services/AssetService.js";
 import { createReadermPackageBuffer, readReadermPackageBuffer } from "../services/ReadermPackageService.js";
 import { searchLibrary } from "../services/LibrarySearchService.js";
+import { normalizeMarkdownUnorderedListIndent } from "../../shared/MarkdownListNormalizationService.js";
 import type { StoredAnchor, StoredAnnotation } from "../storeMigration.js";
 import type { DbDocument, IpcContext } from "./storeContext.js";
 
@@ -43,6 +44,7 @@ function removeDocumentRecord(ctx: IpcContext, documentId: string) {
   delete ctx.store.summaries[documentId];
   delete ctx.store.ai_history[documentId];
   delete ctx.store.symbols[documentId];
+  delete ctx.store.formulas[documentId];
   delete ctx.store.paragraph_translations[documentId];
   delete ctx.store.view_states[documentId];
   ctx.store.assets = ctx.store.assets.filter((item) => item.document_id !== documentId);
@@ -115,6 +117,7 @@ async function createReadermSnapshot(ctx: IpcContext, document: DbDocument, mark
     anchors: ctx.store.anchors.filter((anchor) => referencedIds.has(anchor.document_id)),
     annotations: ctx.store.annotations.filter((annotation) => referencedIds.has(annotation.document_id)),
     symbols: [...referencedIds].flatMap((id) => ctx.store.symbols[id] || []),
+    formulas: [...referencedIds].flatMap((id) => ctx.store.formulas[id] || []),
     pdfDataByDocumentId,
     latexDataByDocumentId,
     assets: await ctx.packageAssetsForDocumentAsync(document.document_id, markdown),
@@ -144,6 +147,7 @@ async function createReaderPFromPdfPath(ctx: IpcContext, source: string) {
   ctx.store.summaries[id] = { content: "", updated_at: timestamp };
   ctx.store.ai_history[id] = [];
   ctx.store.symbols[id] = [];
+  ctx.store.formulas[id] = [];
   await ctx.saveReaderPackageForDocument({
     document,
     defaultPath: join(dirname(source), `${title}.readerp`),
@@ -153,6 +157,7 @@ async function createReaderPFromPdfPath(ctx: IpcContext, source: string) {
     anchors: [],
     annotations: [],
     symbols: [],
+    formulas: [],
     pdfData,
   });
   ctx.saveStore();
@@ -160,7 +165,7 @@ async function createReaderPFromPdfPath(ctx: IpcContext, source: string) {
 }
 
 async function createReaderMFromMarkdownPath(ctx: IpcContext, source: string) {
-  const markdown = await readFile(source, "utf8");
+  const markdown = normalizeMarkdownUnorderedListIndent(await readFile(source, "utf8"));
   const originalName = basename(source);
   const title = originalName.replace(new RegExp(`${extname(originalName)}$`), "");
   const id = randomUUID();
@@ -182,6 +187,7 @@ async function createReaderMFromMarkdownPath(ctx: IpcContext, source: string) {
   ctx.store.summaries[id] = { content: "", updated_at: timestamp };
   ctx.store.ai_history[id] = [];
   ctx.store.symbols[id] = [];
+  ctx.store.formulas[id] = [];
   const saveResult = await dialog.showSaveDialog(ctx.window, {
     title: "Save ReaderM",
     defaultPath: join(dirname(source), `${title}.readerm`),
@@ -204,7 +210,7 @@ export async function importMarkdownDocumentFromPath(ctx: IpcContext, rawPath: s
   }
   const extension = extname(source).toLowerCase();
   if (extension !== ".md") throw new Error("Open a .md file.");
-  const markdown = await readFile(source, "utf8");
+  const markdown = normalizeMarkdownUnorderedListIndent(await readFile(source, "utf8"));
   const originalName = basename(source);
   const title = originalName.replace(new RegExp(`${extname(originalName)}$`), "");
   const id = randomUUID();
@@ -227,6 +233,7 @@ export async function importMarkdownDocumentFromPath(ctx: IpcContext, rawPath: s
   ctx.store.summaries[id] = { content: "", updated_at: timestamp };
   ctx.store.ai_history[id] = [];
   ctx.store.symbols[id] = [];
+  ctx.store.formulas[id] = [];
   ctx.saveStore();
   return document;
 }
@@ -239,13 +246,15 @@ async function importReaderPFromPath(ctx: IpcContext, source: string) {
     return existing;
   }
   const packageData = await readReaderPackageBuffer(await readFile(source));
+  const note = normalizeMarkdownUnorderedListIndent(packageData.note);
+  const summary = normalizeMarkdownUnorderedListIndent(packageData.summary);
   const timestamp = ctx.now();
   const id = packageData.packageMode === "markdown-centered" ? packageData.document.document_id : randomUUID();
   const target = packageData.pdfData ? join(ctx.libraryDir, `${id}.pdf`) : join(ctx.libraryDir, `${id}.md`);
   if (packageData.pdfData) {
     await writeFile(target, packageData.pdfData);
   } else {
-    await writeFile(target, packageData.note || packageData.summary || "", "utf8");
+    await writeFile(target, note || summary || "", "utf8");
   }
   const latexTarget = packageData.latexData ? ctx.latexTargetPath(id) : undefined;
   if (packageData.latexData && latexTarget) await writeFile(latexTarget, packageData.latexData);
@@ -283,10 +292,23 @@ async function importReaderPFromPath(ctx: IpcContext, source: string) {
       });
     }
   }
-  ctx.store.notes[id] = { content: packageData.note, updated_at: timestamp };
-  ctx.store.summaries[id] = { content: packageData.summary, updated_at: timestamp };
+  ctx.store.notes[id] = { content: note, updated_at: timestamp };
+  ctx.store.summaries[id] = { content: summary, updated_at: timestamp };
   ctx.store.ai_history[id] = packageData.aiHistory;
   ctx.store.symbols[id] = (packageData.symbols || []) as typeof ctx.store.symbols[string];
+  const packageFormulas = (packageData.formulas || []) as typeof ctx.store.formulas[string];
+  if (packageData.packageMode === "markdown-centered") {
+    for (const formula of packageFormulas) {
+      const targetDocumentId = formula.document_id || id;
+      ctx.store.formulas[targetDocumentId] = [
+        ...(ctx.store.formulas[targetDocumentId] || []).filter((item) => item.formula_id !== formula.formula_id),
+        formula,
+      ];
+    }
+    ctx.store.formulas[id] ||= [];
+  } else {
+    ctx.store.formulas[id] = packageFormulas.map((formula) => ({ ...formula, document_id: id }));
+  }
   for (const asset of packageData.assets) {
     await ctx.createAssetRecordAsync(
       id,
@@ -310,12 +332,13 @@ async function importReaderMFromPath(ctx: IpcContext, source: string) {
     return existing;
   }
   const packageData = await readReadermPackageBuffer(await readFile(source));
+  const markdown = normalizeMarkdownUnorderedListIndent(packageData.markdown);
   const timestamp = ctx.now();
   const id = ctx.store.documents.some((item) => item.document_id === packageData.document.document_id)
     ? randomUUID()
     : packageData.document.document_id;
   const target = join(ctx.libraryDir, `${id}.md`);
-  await writeFile(target, packageData.markdown, "utf8");
+  await writeFile(target, markdown, "utf8");
   const document: DbDocument = {
     document_id: id,
     title: packageData.manifest.title || basename(source, extname(source)),
@@ -346,10 +369,18 @@ async function importReaderMFromPath(ctx: IpcContext, source: string) {
       latex_path: latexTarget,
     } as DbDocument);
   }
-  ctx.store.notes[id] = { content: packageData.markdown, updated_at: timestamp };
+  ctx.store.notes[id] = { content: markdown, updated_at: timestamp };
   ctx.store.summaries[id] = { content: "", updated_at: timestamp };
   ctx.store.ai_history[id] = [];
   ctx.store.symbols[id] = [];
+  ctx.store.formulas[id] = [];
+  for (const formula of (packageData.formulas || []) as typeof ctx.store.formulas[string]) {
+    const targetDocumentId = formula.document_id || id;
+    ctx.store.formulas[targetDocumentId] = [
+      ...(ctx.store.formulas[targetDocumentId] || []).filter((item) => item.formula_id !== formula.formula_id),
+      formula,
+    ];
+  }
   for (const asset of packageData.assets) {
     await ctx.createAssetRecordAsync(
       id,
@@ -411,6 +442,7 @@ export function registerLibraryIpc(ctx: IpcContext) {
     ctx.store.summaries[id] = { content: "", updated_at: timestamp };
     ctx.store.ai_history[id] = [];
     ctx.store.symbols[id] = [];
+    ctx.store.formulas[id] = [];
     await ctx.saveReaderPackageForDocument({
       document,
       defaultPath: join(dirname(source), `${title}.readerp`),
@@ -420,6 +452,7 @@ export function registerLibraryIpc(ctx: IpcContext) {
       anchors: [],
       annotations: [],
       symbols: [],
+      formulas: [],
       pdfData,
     });
     ctx.saveStore();
@@ -494,6 +527,7 @@ export function registerLibraryIpc(ctx: IpcContext) {
     ctx.store.summaries[id] = { content: "", updated_at: timestamp };
     ctx.store.ai_history[id] = [];
     ctx.store.symbols[id] = [];
+    ctx.store.formulas[id] = [];
     await ctx.saveReaderPackageForDocument({
       document,
       defaultPath: join(app.getPath("documents"), `${safeId}.readerp`),
@@ -503,6 +537,7 @@ export function registerLibraryIpc(ctx: IpcContext) {
       anchors: [],
       annotations: [],
       symbols: [],
+      formulas: [],
       pdfData,
       latexData,
     });

@@ -1,6 +1,11 @@
 import type { Range } from "@codemirror/state";
 import { Decoration } from "@codemirror/view";
 
+export interface SourceRange {
+  from: number;
+  to: number;
+}
+
 /**
  * Shared empty `Decoration.replace` used by every decorator that hides a range
  * (markers, leading `# `, etc.). Module-level identity matters — keep this
@@ -38,4 +43,12 @@ export function pushRevealableMark(
   } else {
     pushAtomicRange(ranges, atomicRanges, HIDE, from, to);
   }
+}
+
+export function rangeInsideAnyRange(from: number, to: number, excludedRanges: readonly SourceRange[]): boolean {
+  return excludedRanges.some((range) => from >= range.from && to <= range.to);
+}
+
+export function rangeIntersectsAnyRange(from: number, to: number, excludedRanges: readonly SourceRange[]): boolean {
+  return excludedRanges.some((range) => from < range.to && to > range.from);
 }

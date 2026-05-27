@@ -2094,6 +2094,13 @@ button.live-table-grid-cell,
   margin-right: 0.4em;
 }
 
+.live-codemirror-host .sd-html-br-mark,
+.markdown-preview .markdown-html-br-mark {
+  color: #94a3b8;
+  font-family: var(--markdown-code-font-family, Consolas, "SFMono-Regular", "Liberation Mono", Menlo, monospace);
+  font-size: 0.88em;
+}
+
 .live-codemirror-host .sd-table-widget {
   position: relative;
   display: block;
@@ -2341,6 +2348,7 @@ button.live-table-grid-cell,
 .live-codemirror-host .sd-math-inline {
   display: inline-block;
   margin: 0 1px;
+  text-indent: 0;
   vertical-align: baseline;
 }
 
@@ -2349,6 +2357,7 @@ button.live-table-grid-cell,
   display: block;
   margin: 0.8em 0;
   min-height: 60px;
+  text-indent: 0;
   text-align: center;
   transition: background 160ms ease;
 }

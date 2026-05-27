@@ -15,6 +15,7 @@ import {
 import { buildChatMessages } from "@/services/ReaderAiService";
 import { buildReaderContextPayload, collectReaderEvidences } from "@/services/ReaderContextService";
 import { filterReaderContextForAi } from "@/services/AiContextFilterService";
+import { formatFormulaCandidatesForAi, type FormulaCandidate } from "@/services/FormulaAnalysisService";
 import type {
   AiChatRequest,
   AiHistoryVersion,
@@ -27,6 +28,7 @@ import type {
   ReaderPackageAiMessage,
   RectPct,
   Settings,
+  SymbolDefinition,
 } from "@/types";
 
 type TextSelection = {
@@ -66,12 +68,20 @@ type UseAiTranslationActionsOptions = {
   ensureAnchor: (createdFrom?: Anchor["created_from"]) => Promise<Anchor | null>;
   showNotice: (message: string) => void;
   onAiHistorySaved?: (documentId: string, history: ReaderPackageAiHistory) => void;
+  onSummaryCommitted?: (documentId: string, summary: string, history: ReaderPackageAiHistory) => Promise<void> | void;
 };
 
 type TranslateSelectionOptions = {
   paragraphCache?: {
     pageIndex: number;
   };
+};
+
+type AiReaderSession = {
+  documentId: string;
+  context: DocumentContext;
+  pdfDocument: PdfDocumentProxyLike | null;
+  pageTextItems: Record<number, PdfTextItem[]>;
 };
 
 function markdownIndentWidth(indent: string) {
@@ -113,6 +123,27 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
 
   function createTurnId() {
     return globalThis.crypto?.randomUUID?.() || `turn-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function cloneAiHistory(history: ReaderPackageAiHistory = []): ReaderPackageAiHistory {
+    return history.map((message) => ({
+      role: message.role,
+      content: message.content,
+      ...(message.turn_id ? { turn_id: message.turn_id } : {}),
+      ...(message.versions?.length ? {
+        current_version: message.current_version,
+        versions: message.versions.map((version) => ({ ...version })),
+      } : {}),
+    }));
+  }
+
+  function currentDocumentId() {
+    return options.context.value?.document.document_id || "";
+  }
+
+  function syncSessionHistory(documentId: string, history: ReaderPackageAiHistory) {
+    if (currentDocumentId() !== documentId) return;
+    options.aiMessages.value = cloneAiHistory(history);
   }
 
   function currentVersionIndex(message: ReaderPackageAiMessage) {
@@ -205,6 +236,89 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     };
   }
 
+  function findTurnIndexesInHistory(history: ReaderPackageAiHistory, turnId: string) {
+    const legacyMatch = /^legacy-(\d+)$/.exec(turnId);
+    if (legacyMatch) {
+      const userIndex = Number(legacyMatch[1]);
+      const assistantIndex = history.findIndex((message, index) => index > userIndex && message.role === "assistant");
+      return assistantIndex >= 0 ? { userIndex, assistantIndex } : null;
+    }
+    const userIndex = history.findIndex((message) => message.role === "user" && message.turn_id === turnId);
+    const assistantIndex = history.findIndex((message) => message.role === "assistant" && message.turn_id === turnId);
+    return userIndex >= 0 && assistantIndex >= 0 ? { userIndex, assistantIndex } : null;
+  }
+
+  function syncTurnVersionInHistory(history: ReaderPackageAiHistory, userIndex: number, assistantIndex: number, versionIndex = currentVersionIndex(history[assistantIndex])) {
+    const user = history[userIndex];
+    const assistant = history[assistantIndex];
+    const version = assistant?.versions?.[versionIndex];
+    if (!user || !assistant || !version) return;
+    const turnId = assistant.turn_id || user.turn_id || createTurnId();
+    history[userIndex] = { ...user, turn_id: turnId, content: version.user_content };
+    history[assistantIndex] = {
+      ...assistant,
+      turn_id: turnId,
+      current_version: versionIndex,
+      content: version.assistant_content,
+    };
+  }
+
+  function ensureTurnMetadataInHistory(history: ReaderPackageAiHistory, userIndex: number, assistantIndex: number) {
+    const user = history[userIndex];
+    const assistant = history[assistantIndex];
+    if (!user || !assistant) return null;
+    const turnId = assistant.turn_id || user.turn_id || createTurnId();
+    const versions = assistant.versions?.length
+      ? assistant.versions
+      : [{
+        user_content: user.content,
+        assistant_content: assistant.content,
+        created_at: nowIso(),
+      }];
+    const current = currentVersionIndex({ ...assistant, versions });
+    history[userIndex] = { ...user, turn_id: turnId, content: versions[current].user_content };
+    history[assistantIndex] = {
+      ...assistant,
+      turn_id: turnId,
+      versions,
+      current_version: current,
+      content: versions[current].assistant_content,
+    };
+    return { turnId, versions, current };
+  }
+
+  function visibleHistoryBeforeInHistory(history: ReaderPackageAiHistory, userIndex: number) {
+    return history
+      .slice(0, userIndex)
+      .filter((message) => message.content.trim())
+      .map((message) => ({ role: message.role, content: message.content }));
+  }
+
+  function appendTurnVersionInHistory(history: ReaderPackageAiHistory, assistantIndex: number, version: AiHistoryVersion) {
+    const assistant = history[assistantIndex];
+    if (!assistant) return -1;
+    const versions = [...(assistant.versions || []), version];
+    const nextIndex = versions.length - 1;
+    history[assistantIndex] = {
+      ...assistant,
+      versions,
+      current_version: nextIndex,
+      content: version.assistant_content,
+    };
+    return nextIndex;
+  }
+
+  function updateTurnVersionInHistory(history: ReaderPackageAiHistory, assistantIndex: number, versionIndex: number, patch: Partial<AiHistoryVersion>) {
+    const assistant = history[assistantIndex];
+    if (!assistant?.versions?.[versionIndex]) return;
+    const versions = assistant.versions.map((version, index) => index === versionIndex ? { ...version, ...patch } : version);
+    history[assistantIndex] = {
+      ...assistant,
+      versions,
+      content: versions[versionIndex]?.assistant_content || assistant.content,
+    };
+  }
+
   function redoPrompt(mode: AiRedoMode) {
     const current = options.settings.value;
     if (mode === "longer") return current?.ai_redo_longer_prompt || "";
@@ -260,10 +374,10 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     };
   }
 
-  function generatedPdfEvidenceAnchorsForDocument(scope?: "page" | "block") {
-    const currentContext = options.context.value;
-    const documentId = currentContext?.document.document_id;
-    if (!documentId) return [];
+  function generatedPdfEvidenceAnchorsForDocument(scope?: "page" | "block", session?: AiReaderSession) {
+    const currentContext = session?.context || options.context.value;
+    const documentId = session?.documentId || currentContext?.document.document_id;
+    if (!currentContext || !documentId) return [];
     return currentContext.anchors.filter((anchor) => (
       anchor.document_id === documentId
         && anchor.metadata?.kind === "pdf-page-evidence"
@@ -283,9 +397,8 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     return Math.min(2000000, Math.max(0, Math.trunc(value)));
   }
 
-  async function saveAiHistory() {
-    if (!options.context.value) return;
-    const history = options.aiMessages.value
+  function historyForSave(history: ReaderPackageAiHistory) {
+    return history
       .filter((message) => message.content.trim())
       .map((message) => ({
         role: message.role,
@@ -296,10 +409,21 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
           versions: message.versions,
         } : {}),
       }));
-    const documentId = options.context.value.document.document_id;
+  }
+
+  async function saveAiHistoryForDocument(documentId: string, sourceHistory: ReaderPackageAiHistory) {
+    const history = historyForSave(sourceHistory);
     await window.paperReaderPlus.saveAiHistory(documentId, toIpcPlainObject(history));
-    options.context.value.ai_history = history;
+    if (currentDocumentId() === documentId && options.context.value) {
+      options.context.value.ai_history = history;
+    }
     options.onAiHistorySaved?.(documentId, history);
+    return history;
+  }
+
+  async function saveAiHistory() {
+    if (!options.context.value) return;
+    await saveAiHistoryForDocument(options.context.value.document.document_id, options.aiMessages.value);
   }
 
   function limitSummaryText(content: string) {
@@ -307,10 +431,11 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     return limit > 0 ? content.slice(0, limit) : content;
   }
 
-  async function extractWholePdfTextItems() {
-    const document = options.pdfDocument.value;
-    if (!document) return options.pageTextItems.value;
-    const next = { ...options.pageTextItems.value };
+  async function extractWholePdfTextItems(session?: AiReaderSession) {
+    const document = session?.pdfDocument || options.pdfDocument.value;
+    const sourceItems = session?.pageTextItems || options.pageTextItems.value;
+    if (!document) return sourceItems;
+    const next = { ...sourceItems };
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const pageIndex = pageNumber - 1;
       if (next[pageIndex]?.length) continue;
@@ -320,15 +445,20 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         next[pageIndex] = [];
       }
     }
-    options.pageTextItems.value = next;
+    if (session) {
+      session.pageTextItems = next;
+      if (currentDocumentId() === session.documentId) options.pageTextItems.value = next;
+    } else {
+      options.pageTextItems.value = next;
+    }
     return next;
   }
 
-  async function ensurePageLevelEvidenceAnchors(pageItems: Record<number, PdfTextItem[]>) {
-    const currentContext = options.context.value;
+  async function ensurePageLevelEvidenceAnchors(pageItems: Record<number, PdfTextItem[]>, session?: AiReaderSession) {
+    const currentContext = session?.context || options.context.value;
     if (!currentContext) return [];
-    const documentId = currentContext.document.document_id;
-    const existingByBlock = new Map(generatedPdfEvidenceAnchorsForDocument("block").map((anchor) => [
+    const documentId = session?.documentId || currentContext.document.document_id;
+    const existingByBlock = new Map(generatedPdfEvidenceAnchorsForDocument("block", session).map((anchor) => [
       `${anchor.page_index}:${String(anchor.metadata?.block_id || "")}`,
       anchor,
     ]));
@@ -352,6 +482,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         const payload = toIpcPlainObject(blockEvidenceAnchorRequest(block, blockIndex));
         const anchor = await window.paperReaderPlus.createAnchor(documentId, payload);
         currentContext.anchors = [...currentContext.anchors, anchor];
+        if (session && currentDocumentId() === documentId && options.context.value) options.context.value.anchors = currentContext.anchors;
         existingByBlock.set(key, anchor);
         anchors.push(anchor);
       }
@@ -377,36 +508,38 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       const payload = toIpcPlainObject(blockEvidenceAnchorRequest(fallbackBlock, 0));
       const anchor = await window.paperReaderPlus.createAnchor(documentId, payload);
       currentContext.anchors = [...currentContext.anchors, anchor];
+      if (session && currentDocumentId() === documentId && options.context.value) options.context.value.anchors = currentContext.anchors;
       existingByBlock.set(fallbackKey, anchor);
       anchors.push(anchor);
     }
     return anchors;
   }
 
-  function refreshReaderEvidences(context: ReaderContextPayload): ReaderContextPayload {
-    if (!options.context.value) return context;
-    const documentId = options.context.value.document.document_id;
-    const blockEvidenceAnchors = generatedPdfEvidenceAnchorsForDocument("block");
+  function refreshReaderEvidences(context: ReaderContextPayload, session?: AiReaderSession): ReaderContextPayload {
+    const currentContext = session?.context || options.context.value;
+    if (!currentContext) return context;
+    const documentId = session?.documentId || currentContext.document.document_id;
+    const blockEvidenceAnchors = generatedPdfEvidenceAnchorsForDocument("block", session);
     const hasBlockEvidenceAnchors = blockEvidenceAnchors.length > 0;
-    const evidenceLimit = Math.max(12, blockEvidenceAnchors.length || generatedPdfEvidenceAnchorsForDocument().length);
+    const evidenceLimit = Math.max(12, blockEvidenceAnchors.length || generatedPdfEvidenceAnchorsForDocument(undefined, session).length);
     return {
       ...context,
       evidences: collectReaderEvidences({
-        anchors: options.context.value.anchors.filter((anchor) => (
+        anchors: currentContext.anchors.filter((anchor) => (
           anchor.document_id === documentId
             && (!hasBlockEvidenceAnchors || !(anchor.metadata?.kind === "pdf-page-evidence" && anchor.metadata?.scope === "page"))
         )),
-        annotations: options.context.value.annotations.filter((annotation) => annotation.document_id === documentId),
+        annotations: currentContext.annotations.filter((annotation) => annotation.document_id === documentId),
       }, evidenceLimit),
     };
   }
 
-  async function buildExtractedPdfSummarySource() {
-    const pageItems = await extractWholePdfTextItems();
+  async function buildExtractedPdfSummarySource(session?: AiReaderSession) {
+    const pageItems = await extractWholePdfTextItems(session);
     return buildPdfExtractorSummarySource({
-      documentId: options.context.value?.document.document_id || "",
+      documentId: session?.documentId || options.context.value?.document.document_id || "",
       pageItems,
-      pdfDocument: options.pdfDocument.value,
+      pdfDocument: session?.pdfDocument || options.pdfDocument.value,
       settings: {
         simpletex_ocr_enabled: options.settings.value?.simpletex_ocr_enabled === true,
         simpletex_ocr_token: options.settings.value?.simpletex_ocr_token || "",
@@ -416,13 +549,13 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     });
   }
 
-  async function addLoadedPdfContext(context: ReaderContextPayload): Promise<ReaderContextPayload> {
+  async function addLoadedPdfContext(context: ReaderContextPayload, session?: AiReaderSession): Promise<ReaderContextPayload> {
     if (options.settings.value?.ai_send_loaded_pdf_text === false) return context;
-    const pageItems = await extractWholePdfTextItems();
+    const pageItems = await extractWholePdfTextItems(session);
     const source = await buildPdfExtractorSummarySource({
-      documentId: options.context.value?.document.document_id || "",
+      documentId: session?.documentId || options.context.value?.document.document_id || "",
       pageItems,
-      pdfDocument: options.pdfDocument.value,
+      pdfDocument: session?.pdfDocument || options.pdfDocument.value,
       settings: {
         simpletex_ocr_enabled: options.settings.value?.simpletex_ocr_enabled === true,
         simpletex_ocr_token: options.settings.value?.simpletex_ocr_token || "",
@@ -431,21 +564,22 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       recognizeLatexImage: window.paperReaderPlus.recognizeLatexImage,
     });
     let next: ReaderContextPayload = { ...context, summary_source: source };
-    if (!generatedPdfEvidenceAnchorsForDocument("block").length) {
-      await ensurePageLevelEvidenceAnchors(pageItems);
-      next = refreshReaderEvidences(next);
+    if (!generatedPdfEvidenceAnchorsForDocument("block", session).length) {
+      await ensurePageLevelEvidenceAnchors(pageItems, session);
+      next = refreshReaderEvidences(next, session);
     } else if (!next.evidences.length) {
-      next = refreshReaderEvidences(next);
+      next = refreshReaderEvidences(next, session);
     }
     return next;
   }
 
-  async function buildSummaryReaderContext(base: ReaderContextPayload): Promise<ReaderContextPayload> {
+  async function buildSummaryReaderContext(base: ReaderContextPayload, session?: AiReaderSession): Promise<ReaderContextPayload> {
     const mode = options.settings.value?.summary_source || "pdf-extractor";
-    if (!options.context.value) return base;
+    const currentContext = session?.context || options.context.value;
+    if (!currentContext) return base;
     if (mode === "latex") {
       try {
-        const latex = await window.paperReaderPlus.getLatexSource(options.context.value.document.document_id);
+        const latex = await window.paperReaderPlus.getLatexSource(session?.documentId || currentContext.document.document_id);
         return {
           ...base,
           summary_source: {
@@ -456,7 +590,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         };
       } catch (cause) {
         options.showNotice(cause instanceof Error ? cause.message : String(cause));
-        return { ...base, summary_source: await buildExtractedPdfSummarySource() };
+        return { ...base, summary_source: await buildExtractedPdfSummarySource(session) };
       }
     }
     if (mode === "pdf-direct") {
@@ -481,21 +615,22 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       };
     }
     const figureLimit = summaryFigureLimit();
-    const summarySource = await buildExtractedPdfSummarySource();
-    const pageItems = options.pageTextItems.value;
+    const summarySource = await buildExtractedPdfSummarySource(session);
+    const pageItems = session?.pageTextItems || options.pageTextItems.value;
     let next: ReaderContextPayload = { ...base, summary_source: summarySource };
-    if (!generatedPdfEvidenceAnchorsForDocument("block").length) {
-      await ensurePageLevelEvidenceAnchors(pageItems);
-      next = refreshReaderEvidences(next);
+    if (!generatedPdfEvidenceAnchorsForDocument("block", session).length) {
+      await ensurePageLevelEvidenceAnchors(pageItems, session);
+      next = refreshReaderEvidences(next, session);
     } else if (!next.evidences.length) {
-      next = refreshReaderEvidences(next);
+      next = refreshReaderEvidences(next, session);
     }
-    if (!options.pdfDocument.value || figureLimit <= 0) return next;
+    const pdfDocument = session?.pdfDocument || options.pdfDocument.value;
+    if (!pdfDocument || figureLimit <= 0) return next;
     try {
-      const targets = await findPdfFigureTargets(options.pdfDocument.value, figureLimit);
+      const targets = await findPdfFigureTargets(pdfDocument, figureLimit);
       const figureAttachments = [];
       for (const target of targets.slice(0, figureLimit)) {
-        const dataUrl = await renderPdfRegionImage(options.pdfDocument.value, target.page_index, target.preview_rect_pct, {
+        const dataUrl = await renderPdfRegionImage(pdfDocument, target.page_index, target.preview_rect_pct, {
           targetWidth: 1200,
           minScale: 1,
           maxScale: 2.4,
@@ -533,6 +668,182 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       activeAnchor: selectionAnchor,
       activeAnnotation: selectionAnnotation,
     });
+  }
+
+  async function buildFullPdfSummarySource() {
+    const pageItems = await extractWholePdfTextItems();
+    return buildPdfExtractorSummarySource({
+      documentId: options.context.value?.document.document_id || "",
+      pageItems,
+      pdfDocument: options.pdfDocument.value,
+      settings: {
+        simpletex_ocr_enabled: options.settings.value?.simpletex_ocr_enabled === true,
+        simpletex_ocr_token: options.settings.value?.simpletex_ocr_token || "",
+      },
+      textCharLimit: 0,
+      recognizeLatexImage: window.paperReaderPlus.recognizeLatexImage,
+    });
+  }
+
+  async function buildFormulaPdfSummarySource() {
+    const pageItems = await extractWholePdfTextItems();
+    return buildPdfExtractorSummarySource({
+      documentId: options.context.value?.document.document_id || "",
+      pageItems,
+      pdfDocument: options.pdfDocument.value,
+      settings: {
+        simpletex_ocr_enabled: false,
+        simpletex_ocr_token: "",
+      },
+      textCharLimit: summaryTextCharLimit(),
+      recognizeLatexImage: window.paperReaderPlus.recognizeLatexImage,
+    });
+  }
+
+  function fullAnnotationContext() {
+    if (!options.context.value) return "(none)";
+    const anchorsById = new Map(options.context.value.anchors.map((anchor) => [anchor.anchor_id, anchor]));
+    const rows = options.context.value.annotations
+      .filter((annotation) => annotation.document_id === options.context.value?.document.document_id)
+      .sort((left, right) => left.sort_index.localeCompare(right.sort_index))
+      .map((annotation, index) => {
+        const anchor = anchorsById.get(annotation.anchor_id);
+        return [
+          `${index + 1}. ${annotation.type} on page ${annotation.page_index + 1}`,
+          `   Quote: ${annotation.target.text_quote?.exact || anchor?.text_quote.exact || ""}`,
+          annotation.comment ? `   Comment: ${annotation.comment}` : "",
+        ].filter(Boolean).join("\n");
+      });
+    return rows.join("\n") || "(none)";
+  }
+
+  async function getAttachedLatexContent() {
+    const document = options.context.value?.document;
+    if (!document?.latex_path) return "";
+    try {
+      const latex = await window.paperReaderPlus.getLatexSource(document.document_id);
+      return latex.content;
+    } catch {
+      return "";
+    }
+  }
+
+  async function buildSymbolReaderContext(symbols: SymbolDefinition[], source: "pdf" | "latex") {
+    const base = buildCurrentReaderContext();
+    if (!base || !options.context.value) return null;
+    const latexContent = await getAttachedLatexContent();
+    const summarySource = source === "latex"
+      ? {
+        mode: "latex" as const,
+        label: "Complete LaTeX source",
+        content: latexContent || "(no LaTeX source is attached)",
+      }
+      : await buildFormulaPdfSummarySource();
+    return {
+      ...base,
+      evidences: collectReaderEvidences({
+        anchors: options.context.value.anchors.filter((anchor) => anchor.document_id === options.context.value?.document.document_id),
+        annotations: options.context.value.annotations.filter((annotation) => annotation.document_id === options.context.value?.document.document_id),
+      }, Number.MAX_SAFE_INTEGER),
+      symbols,
+      annotation_context: fullAnnotationContext(),
+      latex_content: latexContent,
+      symbol_source_mode: source,
+      summary_source: summarySource,
+    } satisfies ReaderContextPayload;
+  }
+
+  async function requestSymbolAi(symbols: SymbolDefinition[], source: "pdf" | "latex") {
+    if (!options.context.value) return "";
+    const readerContext = await buildSymbolReaderContext(symbols, source);
+    if (!readerContext) return "";
+    const response = await window.paperReaderPlus.aiChat(toIpcPlainObject({
+      task: "symbols",
+      messages: [],
+      document_id: options.context.value.document.document_id,
+      reader_context: readerContext,
+    }) as AiChatRequest);
+    return response.content;
+  }
+
+  async function buildFormulaReaderContext(params: {
+    mode: "batch" | "single";
+    source: "pdf" | "latex";
+    symbols: SymbolDefinition[];
+    candidates?: FormulaCandidate[];
+    candidate?: FormulaCandidate;
+    latex?: string;
+    rawText?: string;
+  }) {
+    const base = buildCurrentReaderContext();
+    if (!base || !options.context.value) return null;
+    const latexContent = await getAttachedLatexContent();
+    const summarySource = params.source === "latex"
+      ? {
+        mode: "latex" as const,
+        label: "Complete LaTeX source",
+        content: latexContent || "(no LaTeX source is attached)",
+      }
+      : await buildFullPdfSummarySource();
+    return {
+      ...base,
+      evidences: collectReaderEvidences({
+        anchors: options.context.value.anchors.filter((anchor) => anchor.document_id === options.context.value?.document.document_id),
+        annotations: options.context.value.annotations.filter((annotation) => annotation.document_id === options.context.value?.document.document_id),
+      }, Number.MAX_SAFE_INTEGER),
+      symbols: params.symbols,
+      annotation_context: fullAnnotationContext(),
+      latex_content: latexContent,
+      summary_source: summarySource,
+      formula_mode: params.mode,
+      formula_latex: params.latex || params.candidate?.latex || "",
+      formula_raw_text: params.rawText || params.candidate?.raw_text || "",
+      formula_context: params.candidate?.context || "",
+      formula_source_label: params.candidate?.source_label || (params.source === "latex" ? "LaTeX source" : "PDF source"),
+      formula_candidates: params.candidates?.length ? formatFormulaCandidatesForAi(params.candidates, {
+        maxChars: options.settings.value?.formula_context_char_limit ?? 90000,
+        maxCandidates: options.settings.value?.formula_candidate_limit ?? 180,
+      }) : "",
+    } satisfies ReaderContextPayload;
+  }
+
+  async function requestFormulaAi(params: {
+    mode: "batch" | "single";
+    source: "pdf" | "latex";
+    symbols: SymbolDefinition[];
+    candidates?: FormulaCandidate[];
+    candidate?: FormulaCandidate;
+    latex?: string;
+    rawText?: string;
+  }) {
+    if (!options.context.value) return "";
+    const readerContext = await buildFormulaReaderContext(params);
+    if (!readerContext) return "";
+    const response = await window.paperReaderPlus.aiChat(toIpcPlainObject({
+      task: "formula",
+      messages: [],
+      document_id: options.context.value.document.document_id,
+      reader_context: readerContext,
+    }) as AiChatRequest);
+    return response.content;
+  }
+
+  async function askAiAboutFormula(candidate: FormulaCandidate) {
+    if (!options.context.value) return;
+    options.rightPanelCollapsed.value = false;
+    options.rightPanelTab.value = "ai";
+    options.selectionState.value = {
+      text: candidate.raw_text,
+      pageIndex: candidate.page_index ?? 0,
+      position: { left: 24, top: 96 },
+    };
+    options.aiInput.value = [
+      "Explain this formula in the paper context.",
+      "",
+      candidate.latex ? `LaTeX:\n${candidate.latex}` : "",
+      candidate.raw_text ? `Raw formula text:\n${candidate.raw_text}` : "",
+      candidate.context ? `Context:\n${candidate.context}` : "",
+    ].filter(Boolean).join("\n\n");
   }
 
   async function askAiAboutSelection() {
@@ -664,18 +975,27 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
 
   async function sendTurnVersion(turnId: string, question: string, redoMode?: AiRedoMode) {
     if (!options.context.value || options.aiLoading.value) return;
-    const indexes = findTurnIndexes(turnId);
+    const targetSession: AiReaderSession = {
+      documentId: options.context.value.document.document_id,
+      context: options.context.value,
+      pdfDocument: options.pdfDocument.value,
+      pageTextItems: { ...options.pageTextItems.value },
+    };
+    const targetDocument = targetSession.context.document;
+    const targetDocumentId = targetDocument.document_id;
+    const sessionHistory = cloneAiHistory(options.aiMessages.value);
+    const indexes = findTurnIndexesInHistory(sessionHistory, turnId);
     const normalizedQuestion = question.trim();
     if (!indexes || !normalizedQuestion) return;
-    const metadata = ensureTurnMetadata(indexes.userIndex, indexes.assistantIndex);
+    const metadata = ensureTurnMetadataInHistory(sessionHistory, indexes.userIndex, indexes.assistantIndex);
     if (!metadata) return;
     const initialReaderContext = buildCurrentReaderContext();
     if (!initialReaderContext) return;
-    const readerContext = filterReaderContextForAi(await addLoadedPdfContext(initialReaderContext), options.settings.value);
+    const readerContext = filterReaderContextForAi(await addLoadedPdfContext(initialReaderContext, targetSession), options.settings.value);
     const promptAppend = redoMode ? redoPrompt(redoMode) : "";
     const requestMessages = buildChatMessages(readerContext, normalizedQuestion, promptAppend);
-    const history = visibleHistoryBefore(indexes.userIndex);
-    const versionIndex = appendTurnVersion(indexes.assistantIndex, {
+    const history = visibleHistoryBeforeInHistory(sessionHistory, indexes.userIndex);
+    const versionIndex = appendTurnVersionInHistory(sessionHistory, indexes.assistantIndex, {
       user_content: normalizedQuestion,
       assistant_content: "",
       ...(redoMode ? { redo_mode: redoMode } : {}),
@@ -683,50 +1003,52 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       created_at: nowIso(),
     });
     if (versionIndex < 0) return;
-    syncTurnVersion(indexes.userIndex, indexes.assistantIndex, versionIndex);
+    syncTurnVersionInHistory(sessionHistory, indexes.userIndex, indexes.assistantIndex, versionIndex);
+    syncSessionHistory(targetDocumentId, sessionHistory);
     options.aiLoading.value = true;
     options.pendingAiTask.value = "chat";
     const payload = toIpcPlainObject({
       task: "chat",
-      document: options.context.value.document,
-      document_id: options.context.value.document.document_id,
+      document: targetDocument,
+      document_id: targetDocumentId,
       summary_source_mode: options.settings.value?.summary_source || "pdf-extractor",
       selection: readerContext.selection,
       reader_context: readerContext,
       messages: [...history, ...requestMessages],
     }) as AiChatRequest;
     const setAssistantContent = (content: string) => {
-      updateTurnVersion(indexes.assistantIndex, versionIndex, { assistant_content: content });
-      syncTurnVersion(indexes.userIndex, indexes.assistantIndex, versionIndex);
+      updateTurnVersionInHistory(sessionHistory, indexes.assistantIndex, versionIndex, { assistant_content: content });
+      syncTurnVersionInHistory(sessionHistory, indexes.userIndex, indexes.assistantIndex, versionIndex);
+      syncSessionHistory(targetDocumentId, sessionHistory);
     };
     try {
       activeAiStreamCancel = window.paperReaderPlus.aiChatStream(payload, {
         onDelta: (delta) => {
-          const current = options.aiMessages.value[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
+          const current = sessionHistory[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
           setAssistantContent(`${current}${delta}`);
         },
         onDone: (content) => {
-          const current = options.aiMessages.value[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
+          const current = sessionHistory[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
           if (!current && content) setAssistantContent(content);
-          void saveAiHistory().finally(() => {
+          void saveAiHistoryForDocument(targetDocumentId, sessionHistory).finally(() => {
             options.aiLoading.value = false;
             options.pendingAiTask.value = null;
             activeAiStreamCancel = null;
           });
         },
         onError: (message) => {
-          const current = options.aiMessages.value[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
+          const current = sessionHistory[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
           setAssistantContent(current ? `${current}\n\n${message}` : message);
-          void saveAiHistory().finally(() => {
+          void saveAiHistoryForDocument(targetDocumentId, sessionHistory).finally(() => {
             options.aiLoading.value = false;
             options.pendingAiTask.value = null;
             activeAiStreamCancel = null;
           });
         },
         onCancel: () => {
-          const current = options.aiMessages.value[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
+          const current = sessionHistory[indexes.assistantIndex]?.versions?.[versionIndex]?.assistant_content || "";
           setAssistantContent(current ? `${current}\n\n[Stopped]` : "[Stopped]");
-          void saveAiHistory().finally(() => {
+          void saveAiHistoryForDocument(targetDocumentId, sessionHistory).finally(() => {
             options.aiLoading.value = false;
             options.pendingAiTask.value = null;
             activeAiStreamCancel = null;
@@ -735,7 +1057,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       });
     } catch (cause) {
       setAssistantContent(cause instanceof Error ? cause.message : String(cause));
-      await saveAiHistory();
+      await saveAiHistoryForDocument(targetDocumentId, sessionHistory);
       options.aiLoading.value = false;
       options.pendingAiTask.value = null;
       activeAiStreamCancel = null;
@@ -773,34 +1095,46 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     readerContext?: ReaderContextPayload;
   }) {
     if (!options.context.value || options.aiLoading.value) return;
+    const targetSession: AiReaderSession = {
+      documentId: options.context.value.document.document_id,
+      context: options.context.value,
+      pdfDocument: options.pdfDocument.value,
+      pageTextItems: { ...options.pageTextItems.value },
+    };
+    const targetDocument = targetSession.context.document;
+    const targetDocumentId = targetDocument.document_id;
+    const initialAiInput = options.aiInput.value.trim();
+    const initialHistory = cloneAiHistory(options.aiMessages.value);
     const initialReaderContext = sendOptions?.readerContext || buildCurrentReaderContext();
     if (!initialReaderContext) return;
     const enrichedReaderContext = task === "summary"
-      ? await buildSummaryReaderContext(initialReaderContext)
+      ? await buildSummaryReaderContext(initialReaderContext, targetSession)
       : task === "chat"
-        ? await addLoadedPdfContext(initialReaderContext)
+        ? await addLoadedPdfContext(initialReaderContext, targetSession)
         : initialReaderContext;
     const readerContext = filterReaderContextForAi(enrichedReaderContext, options.settings.value);
-    const userContent = sendOptions?.displayContent || (task === "summary" ? "Generate an evidence-linked summary." : options.aiInput.value.trim());
+    const userContent = sendOptions?.displayContent || (task === "summary" ? "Generate an evidence-linked summary." : initialAiInput);
     if (!userContent && task !== "summary") return;
     const requestMessages = sendOptions?.messages || (task === "summary" ? [] : buildChatMessages(readerContext, userContent));
-    const history = options.aiMessages.value.map((message) => ({ role: message.role, content: message.content }));
+    const sessionHistory = cloneAiHistory(initialHistory);
+    const history = sessionHistory.map((message) => ({ role: message.role, content: message.content }));
     const turnId = createTurnId();
-    options.aiMessages.value.push({ role: "user", content: userContent, turn_id: turnId });
-    options.aiInput.value = "";
+    sessionHistory.push({ role: "user", content: userContent, turn_id: turnId });
+    syncSessionHistory(targetDocumentId, sessionHistory);
+    if (currentDocumentId() === targetDocumentId) options.aiInput.value = "";
     options.aiLoading.value = true;
     options.pendingAiTask.value = task;
     const payload = toIpcPlainObject({
       task,
-      document: options.context.value.document,
-      document_id: options.context.value.document.document_id,
+      document: targetDocument,
+      document_id: targetDocumentId,
       summary_source_mode: options.settings.value?.summary_source || "pdf-extractor",
       selection: readerContext.selection,
       reader_context: readerContext,
       messages: [...history, ...requestMessages],
     }) as AiChatRequest;
     if (task === "summary") {
-      const assistantIndex = options.aiMessages.value.push({
+      const assistantIndex = sessionHistory.push({
         role: "assistant",
         content: "",
         turn_id: turnId,
@@ -811,6 +1145,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
           created_at: nowIso(),
         }],
       }) - 1;
+      syncSessionHistory(targetDocumentId, sessionHistory);
       let latestSummaryContent = "";
       let summaryStatusTimer: number | null = window.setInterval(() => {
         options.aiSummaryOutputChars.value = latestSummaryContent.length;
@@ -822,13 +1157,18 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       };
       const commitSummaryAssistant = (content: string) => {
         const expandedContent = expandFoldableMarkdownLists(content);
-        options.summaryDraft.value = expandedContent;
-        const current = options.aiMessages.value[assistantIndex];
+        if (currentDocumentId() === targetDocumentId) options.summaryDraft.value = expandedContent;
+        const current = sessionHistory[assistantIndex];
         if (!current) return;
         const versions = current.versions?.length
           ? current.versions.map((version, index) => index === 0 ? { ...version, assistant_content: expandedContent } : version)
           : [{ user_content: userContent, assistant_content: expandedContent, created_at: nowIso() }];
-        options.aiMessages.value[assistantIndex] = { ...current, content: expandedContent, versions, current_version: 0 };
+        sessionHistory[assistantIndex] = { ...current, content: expandedContent, versions, current_version: 0 };
+        syncSessionHistory(targetDocumentId, sessionHistory);
+      };
+      const saveSummarySession = async () => {
+        const savedHistory = await saveAiHistoryForDocument(targetDocumentId, sessionHistory);
+        await options.onSummaryCommitted?.(targetDocumentId, expandFoldableMarkdownLists(latestSummaryContent), savedHistory);
       };
       try {
         activeAiStreamCancel = window.paperReaderPlus.aiChatStream(payload, {
@@ -839,7 +1179,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
             if (!latestSummaryContent && content) latestSummaryContent = content;
             options.aiSummaryOutputChars.value = latestSummaryContent.length;
             commitSummaryAssistant(latestSummaryContent);
-            void saveAiHistory().finally(() => {
+            void saveSummarySession().finally(() => {
               stopSummaryStatusTimer();
               options.aiLoading.value = false;
               options.pendingAiTask.value = null;
@@ -851,7 +1191,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
             latestSummaryContent = latestSummaryContent ? `${latestSummaryContent}\n\n${message}` : message;
             options.aiSummaryOutputChars.value = latestSummaryContent.length;
             commitSummaryAssistant(latestSummaryContent);
-            void saveAiHistory().finally(() => {
+            void saveSummarySession().finally(() => {
               stopSummaryStatusTimer();
               options.aiLoading.value = false;
               options.pendingAiTask.value = null;
@@ -863,7 +1203,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
             latestSummaryContent = latestSummaryContent ? `${latestSummaryContent}\n\n[Stopped]` : "[Stopped]";
             options.aiSummaryOutputChars.value = latestSummaryContent.length;
             commitSummaryAssistant(latestSummaryContent);
-            void saveAiHistory().finally(() => {
+            void saveSummarySession().finally(() => {
               stopSummaryStatusTimer();
               options.aiLoading.value = false;
               options.pendingAiTask.value = null;
@@ -877,7 +1217,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         latestSummaryContent = content;
         options.aiSummaryOutputChars.value = latestSummaryContent.length;
         commitSummaryAssistant(content);
-        await saveAiHistory();
+        await saveSummarySession();
         stopSummaryStatusTimer();
         options.aiLoading.value = false;
         options.pendingAiTask.value = null;
@@ -887,7 +1227,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       return;
     }
 
-    const assistantIndex = options.aiMessages.value.push({
+    const assistantIndex = sessionHistory.push({
       role: "assistant",
       content: "",
       turn_id: turnId,
@@ -898,41 +1238,43 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
         created_at: nowIso(),
       }],
     }) - 1;
+    syncSessionHistory(targetDocumentId, sessionHistory);
     const updateAssistant = (content: string) => {
-      const current = options.aiMessages.value[assistantIndex];
+      const current = sessionHistory[assistantIndex];
       if (!current) return;
       const versions = current.versions?.length
         ? current.versions.map((version, index) => index === 0 ? { ...version, assistant_content: content } : version)
         : [{ user_content: userContent, assistant_content: content, created_at: nowIso() }];
-      options.aiMessages.value[assistantIndex] = { ...current, content, versions, current_version: 0 };
+      sessionHistory[assistantIndex] = { ...current, content, versions, current_version: 0 };
+      syncSessionHistory(targetDocumentId, sessionHistory);
     };
     try {
       activeAiStreamCancel = window.paperReaderPlus.aiChatStream(payload, {
         onDelta: (delta) => {
-          const current = options.aiMessages.value[assistantIndex]?.content || "";
+          const current = sessionHistory[assistantIndex]?.content || "";
           updateAssistant(`${current}${delta}`);
         },
         onDone: (content) => {
-          if (!options.aiMessages.value[assistantIndex]?.content && content) updateAssistant(content);
-          void saveAiHistory().finally(() => {
+          if (!sessionHistory[assistantIndex]?.content && content) updateAssistant(content);
+          void saveAiHistoryForDocument(targetDocumentId, sessionHistory).finally(() => {
             options.aiLoading.value = false;
             options.pendingAiTask.value = null;
             activeAiStreamCancel = null;
           });
         },
         onError: (message) => {
-          const current = options.aiMessages.value[assistantIndex]?.content || "";
+          const current = sessionHistory[assistantIndex]?.content || "";
           updateAssistant(current ? `${current}\n\n${message}` : message);
-          void saveAiHistory().finally(() => {
+          void saveAiHistoryForDocument(targetDocumentId, sessionHistory).finally(() => {
             options.aiLoading.value = false;
             options.pendingAiTask.value = null;
             activeAiStreamCancel = null;
           });
         },
         onCancel: () => {
-          const current = options.aiMessages.value[assistantIndex]?.content || "";
+          const current = sessionHistory[assistantIndex]?.content || "";
           updateAssistant(current ? `${current}\n\n[Stopped]` : "[Stopped]");
-          void saveAiHistory().finally(() => {
+          void saveAiHistoryForDocument(targetDocumentId, sessionHistory).finally(() => {
             options.aiLoading.value = false;
             options.pendingAiTask.value = null;
             activeAiStreamCancel = null;
@@ -941,7 +1283,7 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
       });
     } catch (cause) {
       updateAssistant(cause instanceof Error ? cause.message : String(cause));
-      await saveAiHistory();
+      await saveAiHistoryForDocument(targetDocumentId, sessionHistory);
       options.aiLoading.value = false;
       options.pendingAiTask.value = null;
       activeAiStreamCancel = null;
@@ -967,5 +1309,9 @@ export function useAiTranslationActions(options: UseAiTranslationActionsOptions)
     showAiTurnVersion,
     handlePanelSendAi,
     cancelActiveAiStream,
+    requestSymbolAi,
+    requestFormulaAi,
+    askAiAboutFormula,
+    extractWholePdfTextItems,
   };
 }

@@ -360,6 +360,31 @@ function openSelectedPdfSource() {
   emit("openDocument", props.documentId);
 }
 
+async function saveCurrentReaderm() {
+  try {
+    const target = await window.paperReaderPlus.saveCurrentReadermPackage(
+      props.readermDocumentId,
+      props.getReadermMarkdown(),
+    );
+    if (!target) return;
+    emit("readermIndexed", await window.paperReaderPlus.getDocumentContext(props.readermDocumentId));
+    showNotice("ReaderM saved");
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+async function downloadCurrentPdf() {
+  const documentId = context.value?.document.document_id;
+  if (!documentId) return;
+  try {
+    const target = await window.paperReaderPlus.exportPdf(documentId);
+    if (target) showNotice(`PDF saved: ${target}`);
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
 function setSelectionFromAction(payload: {
   pageIndex: number;
   text: string;
@@ -757,6 +782,8 @@ function handleGlobalPointerDown(event: PointerEvent) {
       @undo="undoLastAnnotation"
       @jump-to-page="jumpToPage"
       @toggle-search="searchOpen = !searchOpen"
+      @save-document="saveCurrentReaderm"
+      @download-pdf="downloadCurrentPdf"
       @open-current-page-preview="showUnavailable"
       @show-annotations="showUnavailable"
       @update:annotation-tool-mode="handleAnnotationToolMode"

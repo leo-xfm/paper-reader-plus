@@ -9,6 +9,7 @@ export class TableWidget extends WidgetType {
     private readonly alignments: TableAlignment[],
     private readonly from: number,
     private readonly to: number,
+    private readonly indentColumns = 0,
   ) {
     super();
   }
@@ -17,7 +18,8 @@ export class TableWidget extends WidgetType {
     return JSON.stringify(other.rows) === JSON.stringify(this.rows) &&
       JSON.stringify(other.alignments) === JSON.stringify(this.alignments) &&
       other.from === this.from &&
-      other.to === this.to;
+      other.to === this.to &&
+      other.indentColumns === this.indentColumns;
   }
 
   override toDOM(view: EditorView): HTMLElement {
@@ -26,6 +28,7 @@ export class TableWidget extends WidgetType {
     wrapper.dataset.tableKind = "markdown";
     wrapper.dataset.tableFrom = String(this.from);
     wrapper.dataset.tableTo = String(this.to);
+    if (this.indentColumns > 0) wrapper.style.marginLeft = `${this.indentColumns}ch`;
     const table = document.createElement("table");
     wrapper.appendChild(table);
 
@@ -197,7 +200,7 @@ function renderCellMarkdown(cell: HTMLTableCellElement, source: string): void {
 function renderInlineMarkdown(source: string): Node[] {
   const fragment = document.createDocumentFragment();
   let index = 0;
-  const tokenPattern = /(<u>.+?<\/u>|`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|~~[^~\n]+?~~|\$\$[^$\n]+?\$\$|\$[^$\n]+?\$|\[[^\]\n]+\]\([^) \n]+(?:\s+[^)\n]*)?\)|(?:^|\n)\s*[-+*]\s+\[[ xX]\]\s+|(?:^|\n)\s*[-+*]\s+)/gi;
+  const tokenPattern = /(<br\s*\/?>|<u>.+?<\/u>|`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|~~[^~\n]+?~~|\$\$[^$\n]+?\$\$|\$[^$\n]+?\$|\[[^\]\n]+\]\([^) \n]+(?:\s+[^)\n]*)?\)|(?:^|\n)\s*[-+*]\s+\[[ xX]\]\s+|(?:^|\n)\s*[-+*]\s+)/gi;
   for (const match of source.matchAll(tokenPattern)) {
     const start = match.index || 0;
     if (start > index) appendText(fragment, source.slice(index, start));
@@ -209,6 +212,10 @@ function renderInlineMarkdown(source: string): Node[] {
 }
 
 function appendRenderedToken(fragment: DocumentFragment, token: string): void {
+  if (/^<br\s*\/?>$/i.test(token)) {
+    appendBreakMarker(fragment, token);
+    return;
+  }
   if (/^`[^`\n]+`$/.test(token)) {
     appendElement(fragment, "code", "sd-code", token.slice(1, -1));
     return;
@@ -302,6 +309,11 @@ function appendListMarker(fragment: DocumentFragment, indent: string, checked: b
     marker.appendChild(checkbox);
   }
   fragment.appendChild(marker);
+}
+
+function appendBreakMarker(fragment: DocumentFragment, token: string): void {
+  appendElement(fragment, "span", "sd-html-br-mark", token);
+  fragment.appendChild(document.createElement("br"));
 }
 
 function bulletForLevel(level: number): string {

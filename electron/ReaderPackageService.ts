@@ -25,6 +25,7 @@ export type ReaderPackagePayload = {
   anchors: unknown[];
   annotations: unknown[];
   symbols?: unknown[];
+  formulas?: unknown[];
   pdfData?: Buffer;
   pdfDataByDocumentId?: Record<string, Buffer>;
   latexData?: Buffer;
@@ -86,6 +87,7 @@ export type ReaderPackageManifest = {
     anchors: string;
     annotations: string;
     symbols?: string;
+    formulas?: string;
     assets: string;
     assets_manifest?: string;
   };
@@ -127,6 +129,11 @@ function packageAnnotations(payload: ReaderPackagePayload) {
   return payload.packageMode === "markdown-centered"
     ? payload.annotations.filter((annotation) => typeof annotation === "object" && annotation !== null && documentIds.has((annotation as { document_id?: string }).document_id || ""))
     : currentDocumentAnnotations(payload);
+}
+
+function packageFormulas(payload: ReaderPackagePayload) {
+  const documentIds = packageDocumentIds(payload);
+  return (payload.formulas || []).filter((formula) => typeof formula === "object" && formula !== null && documentIds.has((formula as { document_id?: string }).document_id || ""));
 }
 
 export function extractAssetPathsFromMarkdown(...sources: string[]) {
@@ -192,6 +199,7 @@ function buildManifest(payload: ReaderPackagePayload): ReaderPackageManifest {
       anchors: "anchors.json",
       annotations: "annotations.json",
       symbols: "symbols.json",
+      formulas: "formulas.json",
       assets: "assets/",
       assets_manifest: assets.length ? "assets/assets.json" : undefined,
     },
@@ -243,6 +251,7 @@ export async function createReaderPackageBuffer(payload: ReaderPackagePayload) {
   zip.file("anchors.json", JSON.stringify(packageAnchors(payload), null, 2));
   zip.file("annotations.json", JSON.stringify(packageAnnotations(payload), null, 2));
   zip.file("symbols.json", JSON.stringify(payload.symbols || [], null, 2));
+  zip.file("formulas.json", JSON.stringify(packageFormulas(payload), null, 2));
   const assetsFolder = zip.folder("assets");
   if (assetsFolder && assets.length) {
     const assetManifest: ReaderPackageAssetManifestEntry[] = assets.map((asset) => ({
@@ -291,6 +300,7 @@ export async function readReaderPackageBuffer(buffer: Buffer): Promise<ReaderPac
   const anchors = parseJson<unknown[]>(await zip.file(manifest.files.anchors)?.async("string"), []);
   const annotations = parseJson<unknown[]>(await zip.file(manifest.files.annotations)?.async("string"), []);
   const symbols = parseJson<unknown[]>(await zip.file(manifest.files.symbols || "symbols.json")?.async("string"), []);
+  const formulas = parseJson<unknown[]>(await zip.file(manifest.files.formulas || "formulas.json")?.async("string"), []);
   const assetManifest = parseJson<ReaderPackageAssetManifestEntry[]>(
     await zip.file(manifest.files.assets_manifest || "assets/assets.json")?.async("string"),
     [],
@@ -319,6 +329,7 @@ export async function readReaderPackageBuffer(buffer: Buffer): Promise<ReaderPac
     anchors,
     annotations,
     symbols,
+    formulas,
     pdfData,
     latexData,
     pdfDataByDocumentId,

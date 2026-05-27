@@ -5,10 +5,14 @@ import {
   continueListOnEnter,
   continueBlockquoteOnEnter,
   completeBlockOnEnter,
+  deleteListMarkerOnBackspace,
+  deleteNextLineListMarkerOnDelete,
   extractImages,
+  findTableAt,
   findLinkAt,
   indentSelectedLines,
   insertMathBlockSource,
+  insertTableSource,
   markdownCodeLigatureReplacement,
   markdownRenderRanges,
   markdownRenderRangesInWindow,
@@ -32,7 +36,10 @@ import {
   parseLiveMarkdownSections,
 } from "@/services/LiveMarkdownSectionService";
 import { buildComplexTableGrid, calculateComplexTableSelectionRange, complexTableToMarkdown, parseComplexTableSource, serializeComplexTable } from "@/services/ComplexTableService";
-import { listItemFoldInfo } from "@/vendor/silkdown/decorate/list";
+import { listItemFoldInfo, listItemHasLineStartMarker, listItemVisualLevel } from "@/vendor/silkdown/decorate/list";
+import { blockMathSourceRanges } from "@/vendor/silkdown/decorate/math";
+import { rangeInsideAnyRange } from "@/vendor/silkdown/decorate/shared";
+import { normalizeMarkdownUnorderedListIndent } from "../shared/MarkdownListNormalizationService";
 
 function firstListItemFoldInfo(source: string, enabled = true) {
   const doc = Text.of(source.split("\n"));
@@ -45,6 +52,31 @@ function firstListItemFoldInfo(source: string, enabled = true) {
     },
   });
   return info;
+}
+
+function listItemLevels(source: string) {
+  const tree = parser.configure([GFM]).parse(source);
+  const levels: number[] = [];
+  tree.iterate({
+    enter(node) {
+      if (node.name !== "ListItem") return;
+      levels.push(listItemVisualLevel(node.node));
+    },
+  });
+  return levels;
+}
+
+function renderableListItemMarkers(source: string) {
+  const doc = Text.of(source.split("\n"));
+  const tree = parser.configure([GFM]).parse(source);
+  const markers: number[] = [];
+  tree.iterate({
+    enter(node) {
+      if (node.name !== "ListItem" || !listItemHasLineStartMarker(node.node, doc)) return;
+      markers.push(node.from);
+    },
+  });
+  return markers;
 }
 
 describe("LiveMarkdownEditor", () => {
@@ -168,6 +200,30 @@ describe("LiveMarkdownEditor", () => {
     expect(firstListItemFoldInfo("* parent\n    + child", false)?.collapsed).toBeUndefined();
   });
 
+  it("uses syntax nesting for live list display levels", () => {
+    expect(listItemLevels("+ parent\n  + child")).toEqual([0, 1]);
+    expect(listItemLevels("+ parent\n   + child")).toEqual([0, 1]);
+    expect(renderableListItemMarkers("+ + + text")).toEqual([0]);
+    expect(firstListItemFoldInfo("+ + + text\n    + child")?.markerFrom).toBe(0);
+  });
+
+  it("excludes markdown inline nodes inside editable math blocks", () => {
+    const source = "$$\n\\hat{f}_t^{(N)} = f_{t-1} + f_{t-1}^{(1)}\n$$\n\n**bold**";
+    const doc = Text.of(source.split("\n"));
+    const tree = parser.configure([GFM]).parse(source);
+    const excluded = blockMathSourceRanges(doc);
+    const emphasisStates: boolean[] = [];
+
+    tree.iterate({
+      enter(node) {
+        if (node.name !== "Emphasis" && node.name !== "StrongEmphasis") return;
+        emphasisStates.push(rangeInsideAnyRange(node.from, node.to, excluded));
+      },
+    });
+
+    expect(emphasisStates).toEqual([true, false]);
+  });
+
   it("sets selected block lines back to paragraph source", () => {
     const source = "## Heading\n> Quote\n+ Item\n1. Ordered";
     const edit = setHeading(source, { start: 0, end: source.length }, 0);
@@ -260,12 +316,101 @@ describe("LiveMarkdownEditor", () => {
     expect(edit.value).toBe("+ first\n+ second\n    + third");
   });
 
+  it("outdents selected list branches for shift tab behavior", () => {
+    const source = "+ first\n    + second\n        + child\n    + third";
+    const start = source.indexOf("    + second");
+    const end = start + "    + second".length;
+    const edit = indentSelectedLines(source, { start, end }, "out");
+    expect(edit.value).toBe("+ first\n+ second\n    + child\n    + third");
+  });
+
   it("indents selected list lines with four spaces in live mode", () => {
     const source = "+ first\n+ second";
     const start = source.indexOf("+ second");
     const end = start + "+ second".length;
     const edit = indentSelectedLines(source, { start, end }, "in");
     expect(edit.value).toBe("+ first\n    + second");
+  });
+
+  it("indents selected list branches in live mode", () => {
+    const source = "+ first\n+ second\n    + child\n+ third";
+    const start = source.indexOf("+ second");
+    const end = start + "+ second".length;
+    const edit = indentSelectedLines(source, { start, end }, "in");
+    expect(edit.value).toBe("+ first\n    + second\n        + child\n+ third");
+  });
+
+  it("does not indent a list item when the target parent level does not exist", () => {
+    const first = "+ first\n+ second";
+    expect(indentSelectedLines(first, { start: 0, end: "+ first".length }, "in").value).toBe(first);
+
+    const firstChild = "+ parent\n    + child\n    + sibling";
+    const childStart = firstChild.indexOf("    + child");
+    expect(indentSelectedLines(firstChild, { start: childStart, end: childStart + "    + child".length }, "in").value).toBe(firstChild);
+
+    const siblingStart = firstChild.indexOf("    + sibling");
+    expect(indentSelectedLines(firstChild, { start: siblingStart, end: siblingStart + "    + sibling".length }, "in").value).toBe("+ parent\n    + child\n        + sibling");
+  });
+
+  it("promotes child list branches when deleting a parent list marker", () => {
+    const source = "+ parent\n    + child\n        + grandchild\n+ next";
+    const edit = deleteListMarkerOnBackspace(source, "+ ".length);
+    expect(edit?.value).toBe("parent\n+ child\n    + grandchild\n+ next");
+    expect(edit?.selection).toEqual({ start: 0, end: 0 });
+  });
+
+  it("promotes only the deleted list item's own branch", () => {
+    const source = "+ first\n    + child\n+ second\n    + child";
+    const position = source.indexOf("+ first") + "+ ".length;
+    const edit = deleteListMarkerOnBackspace(source, position);
+    expect(edit?.value).toBe("first\n+ child\n+ second\n    + child");
+  });
+
+  it("promotes child list branches when deleting the next line list marker", () => {
+    const source = "intro\n+ parent\n    + child\n        + grandchild\n+ next";
+    const edit = deleteNextLineListMarkerOnDelete(source, "intro".length);
+    expect(edit?.value).toBe("introparent\n+ child\n    + grandchild\n+ next");
+    expect(edit?.selection).toEqual({ start: "intro".length, end: "intro".length });
+  });
+
+  it("promotes only the next deleted list item's own branch", () => {
+    const source = "intro\n+ first\n    + child\n+ second\n    + child";
+    const edit = deleteNextLineListMarkerOnDelete(source, "intro".length);
+    expect(edit?.value).toBe("introfirst\n+ child\n+ second\n    + child");
+  });
+
+  it("normalizes imported unordered list indentation", () => {
+    expect(normalizeMarkdownUnorderedListIndent("+ parent\n  + child")).toBe("+ parent\n    + child");
+    expect(normalizeMarkdownUnorderedListIndent("+ parent\n      + child")).toBe("+ parent\n    + child");
+    expect(normalizeMarkdownUnorderedListIndent("+ + + text")).toBe("+ + + text");
+    expect(normalizeMarkdownUnorderedListIndent("    + orphan\n+ parent")).toBe("    + orphan\n+ parent");
+  });
+
+  it("keeps fenced code and standalone indented code untouched when normalizing lists", () => {
+    const source = [
+      "```md",
+      "  + code",
+      "```",
+      "",
+      "    + code",
+      "+ parent",
+      "   + child",
+      "",
+    ].join("\n");
+    expect(normalizeMarkdownUnorderedListIndent(source)).toBe([
+      "```md",
+      "  + code",
+      "```",
+      "",
+      "    + code",
+      "+ parent",
+      "    + child",
+      "",
+    ].join("\n"));
+  });
+
+  it("preserves imported markdown line endings while normalizing lists", () => {
+    expect(normalizeMarkdownUnorderedListIndent("+ parent\r\n  + child\r\n")).toBe("+ parent\r\n    + child\r\n");
   });
 
   it("detects markdown links, bare urls, and reader anchors", () => {
@@ -472,6 +617,37 @@ describe("LiveMarkdownEditor", () => {
     expect(table?.rows[1]).toEqual(["", "", "", "", "", ""]);
   });
 
+  it("does not include following prose with pipes in generated markdown table ranges", () => {
+    const source = [
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "This text | should stay prose",
+    ].join("\n");
+    const table = markdownRenderRanges(source).find((range) => range.kind === "table")?.table;
+    expect(table).toBeTruthy();
+    expect(table?.end).toBe("| A | B |\n| --- | --- |\n| 1 | 2 |".length);
+    expect(table?.rows).toEqual([
+      ["A", "B"],
+      ["1", "2"],
+    ]);
+    expect(findTableAt(source, source.indexOf("This text"))).toBeNull();
+  });
+
+  it("inserts markdown tables with list indentation and a blank line before following text", () => {
+    const source = "- item\nnext";
+    const edit = insertTableSource(source, { start: "- item".length, end: "- item".length }, 2, 2);
+    expect(edit.value).toBe([
+      "- item",
+      "",
+      "  | Column 1 | Column 2 |",
+      "  | --- | --- |",
+      "  |   |   |",
+      "",
+      "next",
+    ].join("\n"));
+  });
+
   it("upgrades markdown tables to complex html table source", () => {
     const source = "| Product | Q1 | Q2 |\n| :--- | ---: | ---: |\n| A | 100 | 120 |";
     const table = markdownRenderRanges(source).find((range) => range.kind === "table")?.table;
@@ -527,6 +703,12 @@ describe("LiveMarkdownEditor", () => {
       "| 产品 | Q1 | Q2 | 总收入 |",
       "| 产品A | ¥100,000 | ¥120,000 | ¥220,000 |",
     ].join("\n"));
+  });
+
+  it("preserves br markers in complex html table cells", () => {
+    const table = parseComplexTableSource("<table><tr><td>A<br>B</td></tr></table>");
+    expect(table?.rows[0][0].text).toBe("A<br>B");
+    expect(serializeComplexTable({ width: "100%", rows: table!.rows })).toContain("<td>A<br>B</td>");
   });
 
   it("scans large markdown documents without quadratic table lookup", () => {

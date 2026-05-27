@@ -28,6 +28,7 @@ import { useMarkdownZoom } from "@/composables/useMarkdownZoom";
 import { usePdfPreviewActions } from "@/composables/usePdfPreviewActions";
 import { useAnnotationActions } from "@/composables/useAnnotationActions";
 import { useAiTranslationActions } from "@/composables/useAiTranslationActions";
+import { useFormulaAnalysis } from "@/composables/useFormulaAnalysis";
 import { useSymbolTracking } from "@/composables/useSymbolTracking";
 import { useLibrarySearch } from "@/composables/useLibrarySearch";
 import { useReaderTabs } from "@/composables/useReaderTabs";
@@ -40,7 +41,7 @@ import { parseReaderAnchorHref, parseReaderDocumentHref, type ReaderDocumentView
 import { ANNOTATION_COLORS, annotationMatchesFilters, sortAnnotations, type AnnotationFilters, type AnnotationToolMode } from "@/services/ReaderAnnotationService";
 import { buildAuthorNetwork, type AuthorDocumentInput } from "@/services/AuthorNetworkService";
 import { findSymbolDefinition, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, DocumentViewState, FileAssociationExtension, FileAssociationStatus, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
+import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, DocumentViewState, FileAssociationExtension, FileAssociationStatus, FormulaAnalysis, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -126,6 +127,7 @@ const dictionaryEntries = ref<DictionaryEntry[]>([]);
 const authorDocuments = ref<Record<string, AuthorDocumentInput>>({});
 const latexSymbols = ref<SymbolDefinition[]>([]);
 const savedSymbols = ref<SymbolDefinition[]>([]);
+const formulas = ref<FormulaAnalysis[]>([]);
 const activeSymbol = ref("");
 const annotationColor = ref("#BBD4F6");
 const pendingImageInsert = ref<{ target: "notes" | "summary"; selection?: { start: number; end: number }; kind?: "image" | "formula" } | null>(null);
@@ -242,7 +244,7 @@ const clampedReadermPdfPaneWidth = computed(() => clampReadermPdfPaneWidth(reade
 const readermLayoutStyle = computed(() => ({
   gridTemplateColumns: readermPdfCollapsed.value
     ? "minmax(0, 1fr) 0 var(--rail-collapsed-width)"
-    : `minmax(420px, 1fr) ${readermResizeHandleWidth}px ${clampedReadermPdfPaneWidth.value}px`,
+    : `minmax(0, 1fr) ${readermResizeHandleWidth}px ${clampedReadermPdfPaneWidth.value}px`,
 }));
 const authorProfiles = computed(() => buildAuthorNetwork(Object.values(authorDocuments.value)));
 const agentStatusLabel = computed(() => settings.value
@@ -259,7 +261,7 @@ const defaultReadermEditorMode = computed<ReadermEditorMode>(() => {
 const summaryWaiting = computed(() => aiLoading.value && pendingAiTask.value === "summary");
 const promptTemplatePreview = computed(() => promptTemplates.value.map((template) => ({
   ...template,
-  preview: template.content.slice(0, 1200),
+  preview: template.content,
 })));
 const annotationCommentEditorStyle = computed(() => {
   const editor = annotationCommentEditor.value;
@@ -310,6 +312,7 @@ const {
   dictionaryPreview,
   latexSymbols,
   savedSymbols,
+  formulas,
   activeSymbol,
   arxivIdDraft,
   arxivImportMode,
@@ -432,6 +435,9 @@ const {
   showAiTurnVersion,
   handlePanelSendAi,
   cancelActiveAiStream,
+  requestSymbolAi,
+  requestFormulaAi,
+  askAiAboutFormula,
 } = useAiTranslationActions({
   context,
   selectionState,
@@ -453,6 +459,7 @@ const {
   ensureAnchor,
   showNotice,
   onAiHistorySaved: updateSavedAiHistorySnapshot,
+  onSummaryCommitted: commitAiSummaryToDocument,
 });
 
 const {
@@ -467,6 +474,28 @@ const {
   savedSymbols,
   latexSymbols,
   pageTextItems,
+  requestAiSymbols: (source) => requestSymbolAi(symbols.value, source),
+  showNotice,
+  t,
+});
+
+const {
+  formulaRefreshProgress,
+  activeFormulaId,
+  refreshFormulas,
+  analyzeFormulaCandidate,
+  updateFormula,
+  deleteFormula,
+  selectFormula,
+} = useFormulaAnalysis({
+  context,
+  loading,
+  formulas,
+  pageTextItems,
+  pdfDocument,
+  settings,
+  symbols,
+  requestFormulaAi,
   showNotice,
   t,
 });
@@ -715,6 +744,44 @@ function updateSavedAiHistorySnapshot(documentId: string, history: ReaderPackage
   });
 }
 
+async function commitAiSummaryToDocument(documentId: string, summary: string, history: ReaderPackageAiHistory) {
+  const currentEntry = cacheEntryForDocument(documentId);
+  let document = documents.value.find((item) => item.document_id === documentId)
+    || (context.value?.document.document_id === documentId ? context.value.document : undefined);
+  let entry = currentEntry;
+  if (!entry || !document) {
+    const nextContext = await window.paperReaderPlus.getDocumentContext(documentId);
+    document = nextContext.document;
+    const saved = createDraftState(document, nextContext.note.content, nextContext.summary.content, nextContext.ai_history || []);
+    entry = { draft: saved, saved };
+  }
+
+  const aiHistory = cloneAiHistory(history);
+  const nextDraft = { ...entry.draft, summary, aiHistory };
+  const nextSaved = { ...entry.saved, summary, aiHistory };
+  setDocumentCache(documentId, { draft: nextDraft, saved: nextSaved });
+  if (context.value?.document.document_id === documentId) {
+    summaryDraft.value = summary;
+    aiMessages.value = cloneAiHistory(aiHistory);
+    context.value.summary.content = summary;
+    context.value.ai_history = cloneAiHistory(aiHistory);
+  }
+
+  if (document.readerp_path) {
+    await window.paperReaderPlus.saveCurrentReaderPackage(
+      documentId,
+      nextDraft.note,
+      summary,
+      toIpcPlainObject(aiHistory),
+    );
+  } else {
+    await window.paperReaderPlus.saveSummary(documentId, summary);
+    await window.paperReaderPlus.saveAiHistory(documentId, toIpcPlainObject(aiHistory));
+  }
+  await refreshDocuments();
+  await refreshDocumentHealth(documentId);
+}
+
 async function refreshDocumentHealth(documentId: string) {
   if (!documentId) return;
   try {
@@ -768,6 +835,7 @@ function clearActiveDocumentState() {
   dictionaryPreview.value = null;
   latexSymbols.value = [];
   savedSymbols.value = [];
+  formulas.value = [];
   activeSymbol.value = "";
 }
 
@@ -904,6 +972,18 @@ async function saveSummary() {
     saved: { ...entry.saved, summary: summaryDraft.value },
   });
   await refreshDocumentHealth(documentId);
+}
+
+async function saveCurrentDocument() {
+  if (!context.value) return;
+  const documentId = context.value.document.document_id;
+  cacheCurrentDocumentDraft();
+  try {
+    const saved = await saveDocumentDraft(documentId);
+    if (saved) showNotice(t("app.documentSaved"));
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 async function closeDocumentTab(documentId: string) {
@@ -1125,6 +1205,16 @@ async function exportCurrentReadermPackage() {
     if (report.status === "error") showNotice(`Exporting with ${report.issues.length} health issue(s)`);
   }
   await lifecycleExportCurrentReadermPackage();
+}
+
+async function downloadCurrentPdf() {
+  if (!context.value) return;
+  try {
+    const target = await window.paperReaderPlus.exportPdf(context.value.document.document_id);
+    if (target) showNotice(`PDF saved: ${target}`);
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 async function exportMarkdownReaderPackage() {
@@ -1362,6 +1452,7 @@ function handleMenuAction(action: Parameters<typeof window.paperReaderPlus.onMen
     "settings-file-associations": () => { void openFileAssociationSettings(); },
     "settings-system-prompt": () => openSettingsPanel("system-prompt"),
     "settings-summary-prompt": () => openSettingsPanel("summary-prompt"),
+    "settings-analysis-prompt": () => openSettingsPanel("analysis-prompt"),
   } satisfies Record<string, () => void>;
   actions[action]?.();
 }
@@ -1749,6 +1840,28 @@ function deleteSymbolDefinition(symbol: SymbolDefinition) {
   activeSymbol.value = "";
 }
 
+function selectFormulaAnalysis(formula: FormulaAnalysis) {
+  selectFormula(formula);
+  if (formula.page_index !== undefined) scrollToPage(formula.page_index, { rectsPct: formula.rects_pct, block: "center" });
+}
+
+function reanalyzeFormula(formula: FormulaAnalysis) {
+  void analyzeFormulaCandidate({
+    candidate_id: formula.formula_id.replace(/^.*:formula:/, ""),
+    document_id: formula.document_id,
+    source: formula.source,
+    raw_text: formula.raw_text,
+    latex: formula.latex,
+    context: formula.context || "",
+    page_index: formula.page_index,
+    rects_pct: formula.rects_pct,
+    latex_line: formula.latex_line,
+    source_label: formula.source === "pdf"
+      ? `PDF page ${(formula.page_index ?? 0) + 1}`
+      : `LaTeX line ${formula.latex_line ?? ""}`,
+  }, true);
+}
+
 function jumpToPage() {
   const page = Math.min(totalPages.value, Math.max(1, Number.parseInt(pageJumpDraft.value, 10) || 1));
   scrollToPage(page - 1);
@@ -1870,6 +1983,7 @@ function refreshReadermContext(nextContext: DocumentContext) {
   summaryDraft.value = nextContext.summary.content;
   aiMessages.value = nextContext.ai_history || [];
   savedSymbols.value = nextContext.symbols || [];
+  formulas.value = nextContext.formulas || [];
   const saved = createDraftState(nextContext.document, noteDraft.value, summaryDraft.value, aiMessages.value);
   setDocumentCache(nextContext.document.document_id, { draft: saved, saved });
   void refreshDocumentHealth(nextContext.document.document_id);
@@ -1914,12 +2028,19 @@ function startLibraryResize(event: PointerEvent) {
 }
 
 function clampReadermPdfPaneWidth(width: number) {
-  const minMarkdownWidth = 420;
+  const preferredMarkdownWidth = 420;
   const minPdfWidth = 360;
   const maxPdfWidth = 900;
   const layoutWidth = readermLayoutWidth.value || readermLayoutRef.value?.clientWidth || 1200;
-  const maxByLayout = Math.max(minPdfWidth, layoutWidth - minMarkdownWidth - readermResizeHandleWidth);
-  return Math.min(maxPdfWidth, Math.max(minPdfWidth, Math.min(width, maxByLayout)));
+  const maxFittingPdfWidth = Math.max(0, layoutWidth - readermResizeHandleWidth);
+  const minFittingPdfWidth = Math.min(minPdfWidth, maxFittingPdfWidth);
+  const maxByPreferredMarkdown = layoutWidth - preferredMarkdownWidth - readermResizeHandleWidth;
+  const maxByLayout = Math.min(
+    maxPdfWidth,
+    maxFittingPdfWidth,
+    Math.max(minFittingPdfWidth, maxByPreferredMarkdown),
+  );
+  return Math.min(maxByLayout, Math.max(minFittingPdfWidth, width));
 }
 
 function syncReadermPdfPaneWidth() {
@@ -2176,6 +2297,7 @@ function focusAnchor(anchorId: string) {
               :error="error"
               :page-numbers="pageNumbers"
               :pdf-document="pdfDocument"
+              :document-id="context.document.document_id"
               :page-render-width="pageRenderWidth"
               :active-anchor="activeAnchor"
               :annotations="annotations"
@@ -2191,6 +2313,8 @@ function focusAnchor(anchorId: string) {
               :author-preview="authorPreview"
               :dictionary-entries="dictionaryEntries"
               :dictionary-preview="dictionaryPreview"
+              :formulas="formulas"
+              :settings="settings"
               :capture-image-scale="settings?.capture_image_scale || 2"
               :pdf-paragraph-actions-enabled="settings?.pdf_paragraph_actions_enabled !== false"
               :pdf-author-graph-enabled="settings?.pdf_author_graph_enabled !== false"
@@ -2203,6 +2327,8 @@ function focusAnchor(anchorId: string) {
               @undo="undoLastAnnotation"
               @jump-to-page="jumpToPage"
               @toggle-search="toggleSearch"
+              @save-document="saveCurrentDocument"
+              @download-pdf="downloadCurrentPdf"
               @open-current-page-preview="openCurrentPagePreview"
               @show-annotations="rightPanelCollapsed = false; rightPanelTab = 'annotations'"
               @update:annotation-tool-mode="handleAnnotationToolMode"
@@ -2242,6 +2368,8 @@ function focusAnchor(anchorId: string) {
               @dictionary-hover="handleDictionaryHover"
               @clear-dictionary-hover="clearDictionaryHover"
               @paragraph-action="handleParagraphAction"
+              @formula-ask-ai="askAiAboutFormula"
+              @formula-analyze="analyzeFormulaCandidate"
             />
           </template>
           <template #right>
@@ -2266,6 +2394,9 @@ function focusAnchor(anchorId: string) {
               :symbols="symbols"
               :active-symbol="activeSymbol"
               :symbol-refresh-progress="symbolRefreshProgress"
+              :formulas="formulas"
+              :active-formula-id="activeFormulaId"
+              :formula-refresh-progress="formulaRefreshProgress"
               :document-id="context.document.document_id"
               :settings="settings"
               @collapse="rightPanelCollapsed = true"
@@ -2288,6 +2419,11 @@ function focusAnchor(anchorId: string) {
               @set-symbol-anchor="setSymbolAnchor"
               @delete-symbol="deleteSymbolDefinition"
               @refresh-symbols="refreshSymbols"
+              @select-formula="selectFormulaAnalysis"
+              @update-formula="updateFormula"
+              @delete-formula="deleteFormula"
+              @reanalyze-formula="reanalyzeFormula"
+              @refresh-formulas="refreshFormulas()"
               @update-settings="updateSettingsPatch"
             />
           </template>

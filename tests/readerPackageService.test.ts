@@ -19,6 +19,7 @@ describe("ReaderPackageService", () => {
       anchors: [{ anchor_id: "a1" }],
       annotations: [{ annotation_id: "n1" }],
       symbols: [{ symbol: "x", normalized_symbol: "x", kind: "symbol", definition: "$x$ is state.", source: "latex", confidence: 0.9, favorite: true }],
+      formulas: [{ formula_id: "f1", document_id: "doc-1", latex: "x+y", raw_text: "x+y", analysis: "Adds values.", source: "latex", importance_score: 0.9, status: "parsed", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
       pdfData: Buffer.from("%PDF"),
     });
 
@@ -28,6 +29,7 @@ describe("ReaderPackageService", () => {
     expect(parsed.summary).toBe("Summary");
     expect(parsed.aiHistory).toHaveLength(1);
     expect(parsed.symbols?.[0]).toMatchObject({ symbol: "x", normalized_symbol: "x", favorite: true });
+    expect(parsed.formulas?.[0]).toMatchObject({ formula_id: "f1", latex: "x+y", analysis: "Adds values." });
     expect(parsed.pdfData?.toString()).toBe("%PDF");
   });
 
@@ -102,6 +104,10 @@ describe("ReaderPackageService", () => {
         { anchor_id: "a3", document_id: "doc-3" },
       ],
       annotations: [{ annotation_id: "n2", document_id: "doc-2" }],
+      formulas: [
+        { formula_id: "f2", document_id: "doc-2", latex: "a=b", raw_text: "a=b", analysis: "Key equality.", source: "latex", importance_score: 0.8, status: "parsed", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" },
+        { formula_id: "f3", document_id: "doc-3", latex: "c=d", raw_text: "c=d", analysis: "Other.", source: "latex", importance_score: 0.8, status: "parsed", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" },
+      ],
       pdfDataByDocumentId: {
         "doc-2": Buffer.from("%PDF-2"),
       },
@@ -113,6 +119,7 @@ describe("ReaderPackageService", () => {
     expect(parsed.pdfDataByDocumentId["doc-2"].toString()).toBe("%PDF-2");
     expect(parsed.anchors).toEqual([{ anchor_id: "a2", document_id: "doc-2" }]);
     expect(parsed.annotations).toEqual([{ annotation_id: "n2", document_id: "doc-2" }]);
+    expect(parsed.formulas?.map((formula) => (formula as { formula_id: string }).formula_id)).toEqual(["f2"]);
   });
 
   it("round-trips a markdown-only reader package", async () => {

@@ -32,6 +32,7 @@ export type LiveMarkdownSection = LiveMarkdownRange & {
 };
 
 const TABLE_SEPARATOR_PATTERN = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+const GENERATED_TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
 const LIST_ITEM_PATTERN = /^\s*(?:[-+*]|\d+\.)\s+/;
 const IMAGE_LINE_PATTERN = /^\s*(?:\[)?!\[[^\]\n]*\]\([^)]+\)(?:\]\([^)]+\))?\s*$/;
 
@@ -74,7 +75,7 @@ function makeSection(kind: LiveMarkdownSectionKind, start: number, end: number, 
 function tableEndLine(lines: string[], startLine: number) {
   if (!lines[startLine]?.includes("|") || !TABLE_SEPARATOR_PATTERN.test(lines[startLine + 1] || "")) return -1;
   let endLine = startLine + 1;
-  while (endLine + 1 < lines.length && lines[endLine + 1].includes("|")) endLine += 1;
+  while (endLine + 1 < lines.length && GENERATED_TABLE_ROW_PATTERN.test(lines[endLine + 1] || "")) endLine += 1;
   return endLine;
 }
 

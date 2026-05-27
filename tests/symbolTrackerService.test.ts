@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySymbolRefresh, displaySymbolText, extractSymbolsFromLatex, extractSymbolsFromPdfPages, findSymbolDefinition, mergeSymbolDefinitions, normalizeSymbol, renderSimpleLatexToMarkdown } from "@/services/SymbolTrackerService";
+import { applyAiSymbolCompletion, applySymbolRefresh, displaySymbolText, extractSymbolsFromLatex, extractSymbolsFromPdfPages, findSymbolDefinition, mergeSymbolDefinitions, normalizeSymbol, parseAiSymbolDefinitions, renderSimpleLatexToMarkdown } from "@/services/SymbolTrackerService";
 import type { PdfTextItem } from "@/pdf/pdfTypes";
 
 function pdfItem(text: string): PdfTextItem {
@@ -92,6 +92,37 @@ describe("SymbolTrackerService", () => {
     expect(symbol?.definition).toBe("generated");
     expect(symbol?.favorite).toBe(false);
     expect(symbol?.user_modified).toBe(false);
+  });
+
+  it("parses AI symbol JSON from plain and fenced responses", () => {
+    const plain = parseAiSymbolDefinitions('[{"symbol":"L","kind":"symbol","definition":"loss function","paragraph":"L denotes loss.","page_number":2,"confidence":0.91}]');
+    expect(findSymbolDefinition(plain, "L")?.source).toBe("ai");
+    expect(findSymbolDefinition(plain, "L")?.page_index).toBe(1);
+    const fenced = parseAiSymbolDefinitions('```json\n[{"symbol":"RAG","kind":"abbreviation","definition":"retrieval augmented generation"}]\n```');
+    expect(findSymbolDefinition(fenced, "RAG")?.kind).toBe("abbreviation");
+  });
+
+  it("ignores invalid AI symbol rows", () => {
+    const definitions = parseAiSymbolDefinitions('[{"symbol":"","definition":"missing name"},{"symbol":"x","definition":""},{"symbol":"y","definition":"valid"}]');
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].symbol).toBe("y");
+  });
+
+  it("completes missing symbols from AI without overwriting existing definitions", () => {
+    const completed = applyAiSymbolCompletion(
+      [
+        { symbol: "x", normalized_symbol: "x", kind: "symbol", definition: "existing", source: "pdf", confidence: 0.4 },
+        { symbol: "y", normalized_symbol: "y", kind: "symbol", definition: "", source: "pdf", confidence: 0.4 },
+      ],
+      [
+        { symbol: "x", normalized_symbol: "x", kind: "symbol", definition: "ai x", source: "ai", confidence: 0.9 },
+        { symbol: "y", normalized_symbol: "y", kind: "symbol", definition: "ai y", source: "ai", confidence: 0.9 },
+        { symbol: "z", normalized_symbol: "z", kind: "symbol", definition: "ai z", source: "ai", confidence: 0.9 },
+      ],
+    );
+    expect(findSymbolDefinition(completed, "x")?.definition).toBe("existing");
+    expect(findSymbolDefinition(completed, "y")?.definition).toBe("ai y");
+    expect(findSymbolDefinition(completed, "z")?.source).toBe("ai");
   });
 
   it("renders simple LaTeX prose to markdown", () => {

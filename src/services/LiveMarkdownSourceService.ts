@@ -74,6 +74,10 @@ const CALLOUT_PATTERN = /^\s{0,3}>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?
 const INLINE_COLOR_PATTERN = /<span\s+style=(["'])color:\s*(#[0-9a-f]{6}|black|red|green|blue|purple)\s*;?\1>([^\n]*?\S[^\n]*?)<\/span>/gi;
 const EXPLICIT_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 
+function markdownIndentWidth(indent: string) {
+  return indent.replace(/\t/g, LIST_INDENT).length;
+}
+
 export function normalizedMarkdownLinkHref(value: string) {
   const trimmed = value.trim();
   if (/^www\./i.test(trimmed)) return `https://${trimmed}`;
@@ -476,43 +480,224 @@ function lineSelectionBounds(source: string, selection: SourceSelection) {
   return { start, end };
 }
 
-export function indentSelectedLines(source: string, selection: SourceSelection, direction: "in" | "out"): SourceEdit {
+type SourceLineInfo = {
+  text: string;
+  start: number;
+  end: number;
+};
+
+function sourceLineInfos(source: string): SourceLineInfo[] {
+  const lines = source.split("\n");
+  let offset = 0;
+  return lines.map((text) => {
+    const start = offset;
+    const end = start + text.length;
+    offset = end + 1;
+    return { text, start, end };
+  });
+}
+
+function lineIndexAtOffset(lines: SourceLineInfo[], offset: number) {
+  const safeOffset = Math.max(0, offset);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (safeOffset >= line.start && safeOffset <= line.end) return index;
+    if (safeOffset === line.end + 1) return Math.min(index + 1, lines.length - 1);
+  }
+  return Math.max(0, lines.length - 1);
+}
+
+function unorderedListLineInfo(line: string) {
+  const match = /^([ \t]*)([-+*])([ \t]+)/.exec(line);
+  if (!match) return null;
+  return {
+    indent: match[1],
+    indentWidth: markdownIndentWidth(match[1]),
+  };
+}
+
+function lineOutdentAmount(line: string) {
+  if (line.startsWith(LIST_INDENT)) return LIST_INDENT.length;
+  if (line.startsWith("\t")) return 1;
+  return line.match(/^ {1,3}/)?.[0].length || 0;
+}
+
+function outdentLineOnce(line: string) {
+  const amount = lineOutdentAmount(line);
+  return amount > 0 ? line.slice(amount) : line;
+}
+
+function expandedListIndentSelectionBounds(source: string, selection: SourceSelection, direction: "in" | "out") {
   const bounds = lineSelectionBounds(source, selection);
+  const lines = sourceLineInfos(source);
+  const startIndex = lineIndexAtOffset(lines, bounds.start);
+  const endIndex = lineIndexAtOffset(lines, bounds.end);
+  let expandedEnd = bounds.end;
+
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    const item = unorderedListLineInfo(lines[index]?.text || "");
+    if (!item) continue;
+    if (direction === "out" && lineOutdentAmount(lines[index].text) === 0) continue;
+    for (let scan = index + 1; scan < lines.length; scan += 1) {
+      const text = lines[scan].text;
+      if (!text.trim()) {
+        expandedEnd = Math.max(expandedEnd, lines[scan].end);
+        continue;
+      }
+      const indentWidth = markdownIndentWidth(text.match(/^[ \t]*/)?.[0] || "");
+      if (indentWidth <= item.indentWidth) break;
+      expandedEnd = Math.max(expandedEnd, lines[scan].end);
+    }
+  }
+
+  return { start: bounds.start, end: expandedEnd };
+}
+
+function canIndentListLine(lines: SourceLineInfo[], index: number) {
+  const item = unorderedListLineInfo(lines[index]?.text || "");
+  if (!item) return true;
+  for (let scan = index - 1; scan >= 0; scan -= 1) {
+    const text = lines[scan].text;
+    if (!text.trim()) continue;
+    const previous = unorderedListLineInfo(text);
+    const previousIndentWidth = previous?.indentWidth ?? markdownIndentWidth(text.match(/^[ \t]*/)?.[0] || "");
+    if (previousIndentWidth > item.indentWidth) continue;
+    return Boolean(previous && previousIndentWidth === item.indentWidth);
+  }
+  return false;
+}
+
+function canIndentSelectionIntoParent(source: string, selection: SourceSelection) {
+  const bounds = lineSelectionBounds(source, selection);
+  const lines = sourceLineInfos(source);
+  const startIndex = lineIndexAtOffset(lines, bounds.start);
+  const endIndex = lineIndexAtOffset(lines, bounds.end);
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    if (!unorderedListLineInfo(lines[index]?.text || "")) continue;
+    return canIndentListLine(lines, index);
+  }
+  return true;
+}
+
+export function indentSelectedLines(source: string, selection: SourceSelection, direction: "in" | "out"): SourceEdit {
+  if (direction === "in" && !canIndentSelectionIntoParent(source, selection)) {
+    return { value: source, selection };
+  }
+  const bounds = expandedListIndentSelectionBounds(source, selection, direction);
   const block = source.slice(bounds.start, bounds.end);
-  let deltaStart = 0;
-  let deltaEnd = 0;
-  const lines = block.split("\n").map((line, index) => {
+  let lineStart = bounds.start;
+  const changes: Array<{ position: number; delta: number }> = [];
+  const lines = block.split("\n").map((line) => {
+    const position = lineStart;
+    lineStart += line.length + 1;
     if (direction === "in") {
-      if (index === 0 && selection.start > bounds.start) deltaStart += LIST_INDENT.length;
-      deltaEnd += LIST_INDENT.length;
+      changes.push({ position, delta: LIST_INDENT.length });
       return `${LIST_INDENT}${line}`;
     }
     if (line.startsWith(LIST_INDENT)) {
-      if (index === 0 && selection.start > bounds.start) deltaStart -= LIST_INDENT.length;
-      deltaEnd -= LIST_INDENT.length;
+      changes.push({ position, delta: -LIST_INDENT.length });
       return line.slice(LIST_INDENT.length);
     }
     if (line.startsWith("\t")) {
-      if (index === 0 && selection.start > bounds.start) deltaStart -= 1;
-      deltaEnd -= 1;
+      changes.push({ position, delta: -1 });
       return line.slice(1);
     }
     const twoSpaceIndent = line.match(/^ {1,3}/)?.[0] || "";
     if (twoSpaceIndent) {
-      if (index === 0 && selection.start > bounds.start) deltaStart -= twoSpaceIndent.length;
-      deltaEnd -= twoSpaceIndent.length;
+      changes.push({ position, delta: -twoSpaceIndent.length });
       return line.slice(twoSpaceIndent.length);
     }
     return line;
   });
+  const shiftPosition = (position: number) => changes.reduce((next, change) => (
+    change.position < position ? next + change.delta : next
+  ), position);
   const value = `${source.slice(0, bounds.start)}${lines.join("\n")}${source.slice(bounds.end)}`;
   return {
     value,
     selection: {
-      start: Math.max(bounds.start, selection.start + deltaStart),
-      end: Math.max(bounds.start, selection.end + deltaEnd),
+      start: Math.max(bounds.start, shiftPosition(selection.start)),
+      end: Math.max(bounds.start, shiftPosition(selection.end)),
     },
   };
+}
+
+export function deleteListMarkerOnBackspace(source: string, position: number): SourceEdit | null {
+  const line = lineBoundsAt(source, position);
+  if (position < line.start || position > line.end) return null;
+  const beforeCursor = source.slice(line.start, position);
+  const match = beforeCursor.match(/^(\s*)([-+*])\s?$/);
+  if (!match) return null;
+
+  const lines = sourceLineInfos(source);
+  const currentIndex = lineIndexAtOffset(lines, line.start);
+  const currentIndentWidth = markdownIndentWidth(match[1]);
+  const changes: Array<{ from: number; to: number; insert: string }> = [
+    { from: line.start + match[1].length, to: position, insert: "" },
+  ];
+
+  for (let index = currentIndex + 1; index < lines.length; index += 1) {
+    const text = lines[index].text;
+    if (!text.trim()) continue;
+    const indent = text.match(/^[ \t]*/)?.[0] || "";
+    if (markdownIndentWidth(indent) <= currentIndentWidth) break;
+    const nextText = outdentLineOnce(text);
+    if (nextText !== text) {
+      changes.push({ from: lines[index].start, to: lines[index].end, insert: nextText });
+    }
+  }
+
+  let cursor = line.start + match[1].length;
+  for (const change of changes) {
+    if (change.to <= cursor) cursor += change.insert.length - (change.to - change.from);
+  }
+  const value = changes.reduceRight((next, change) => (
+    `${next.slice(0, change.from)}${change.insert}${next.slice(change.to)}`
+  ), source);
+
+  return { value, selection: { start: cursor, end: cursor } };
+}
+
+function nextLineListPrefix(text: string) {
+  const match = text.match(/^([ \t]*)(?:[-+*][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)/);
+  if (!match) return null;
+  return {
+    prefixLength: match[0].length,
+    indentWidth: markdownIndentWidth(match[1]),
+  };
+}
+
+export function deleteNextLineListMarkerOnDelete(source: string, position: number): SourceEdit | null {
+  const line = lineBoundsAt(source, position);
+  if (position !== line.end || line.end >= source.length || source[line.end] !== "\n") return null;
+  const lines = sourceLineInfos(source);
+  const currentIndex = lineIndexAtOffset(lines, line.start);
+  const nextIndex = currentIndex + 1;
+  const nextLine = lines[nextIndex];
+  if (!nextLine) return null;
+  const prefix = nextLineListPrefix(nextLine.text);
+  if (!prefix) return null;
+
+  const changes: Array<{ from: number; to: number; insert: string }> = [
+    { from: line.end, to: nextLine.start + prefix.prefixLength, insert: "" },
+  ];
+
+  for (let index = nextIndex + 1; index < lines.length; index += 1) {
+    const text = lines[index].text;
+    if (!text.trim()) continue;
+    const indent = text.match(/^[ \t]*/)?.[0] || "";
+    if (markdownIndentWidth(indent) <= prefix.indentWidth) break;
+    const nextText = outdentLineOnce(text);
+    if (nextText !== text) {
+      changes.push({ from: lines[index].start, to: lines[index].end, insert: nextText });
+    }
+  }
+
+  const value = changes.reduceRight((next, change) => (
+    `${next.slice(0, change.from)}${change.insert}${next.slice(change.to)}`
+  ), source);
+
+  return { value, selection: { start: line.end, end: line.end } };
 }
 
 export function toggleLinePrefix(source: string, selection: SourceSelection, prefix: string): SourceEdit {
@@ -586,6 +771,18 @@ function splitTableRow(line: string) {
   return content.split("|").map((cell) => cell.trim());
 }
 
+function isMarkdownTableRowLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.includes("|")) return false;
+  if (/^\|.*\|\s*$/.test(trimmed)) return splitTableRow(trimmed).length >= 2;
+  return splitTableRow(trimmed).length >= 2 && /^[^|]+(?:\|[^|]+)+$/.test(trimmed);
+}
+
+function isGeneratedMarkdownTableRowLine(line: string) {
+  const trimmed = line.trim();
+  return /^\|.*\|\s*$/.test(trimmed) && splitTableRow(trimmed).length >= 2;
+}
+
 function alignmentFromCell(cell: string): "left" | "center" | "right" | null {
   const trimmed = cell.trim();
   if (/^:-+:$/.test(trimmed)) return "center";
@@ -635,15 +832,35 @@ function tableMarkdown(rows: string[][], alignments: Array<"left" | "center" | "
   ].join("\n");
 }
 
+function prefixedLines(source: string, prefix: string) {
+  return prefix ? source.split("\n").map((line) => `${prefix}${line}`).join("\n") : source;
+}
+
+function tableInsertionIndent(source: string, position: number) {
+  const line = lineBoundsAt(source, position);
+  const text = source.slice(line.start, line.end);
+  const list = text.match(/^(\s*)(?:[-+*]|\d+\.)\s+/);
+  if (list) return `${list[1]}  `;
+  const leading = text.match(/^[ \t]+/)?.[0] || "";
+  return leading;
+}
+
+function blockInsertionPaddingAfter(source: string, position: number) {
+  if (position >= source.length) return "";
+  if (source[position] !== "\n") return "\n\n";
+  if (source[position + 1] === "\n" || position + 1 >= source.length) return "";
+  return "\n";
+}
+
 export function insertTableSource(source: string, selection: SourceSelection, rows = 3, cols = 3): SourceEdit {
   const safeRows = Math.min(Math.max(2, rows), 10);
   const safeCols = Math.min(Math.max(1, cols), 10);
   const tableRows = Array.from({ length: safeRows }, (_row, rowIndex) =>
     Array.from({ length: safeCols }, (_col, colIndex) => rowIndex === 0 ? `Column ${colIndex + 1}` : " "));
-  const insertion = tableMarkdown(tableRows, Array.from({ length: safeCols }, () => null));
   const range = orderedRange(selection);
+  const insertion = prefixedLines(tableMarkdown(tableRows, Array.from({ length: safeCols }, () => null)), tableInsertionIndent(source, range.start));
   const before = range.start > 0 && source[range.start - 1] !== "\n" ? "\n\n" : "";
-  const after = range.end < source.length && source[range.end] !== "\n" ? "\n\n" : "";
+  const after = blockInsertionPaddingAfter(source, range.end);
   const text = `${before}${insertion}${after}`;
   const value = `${source.slice(0, range.start)}${text}${source.slice(range.end)}`;
   return { value, selection: { start: range.start + before.length, end: range.start + before.length + insertion.length } };
@@ -652,7 +869,7 @@ export function insertTableSource(source: string, selection: SourceSelection, ro
 export function findTableAt(source: string, position: number): SourceTableRange | null {
   const line = lineBoundsAt(source, position);
   const currentLine = source.slice(line.start, line.end);
-  if (!currentLine.includes("|")) return null;
+  if (!isGeneratedMarkdownTableRowLine(currentLine)) return null;
 
   const lines = [{ start: line.start, end: line.end, text: currentLine }];
   let firstStart = line.start;
@@ -660,7 +877,7 @@ export function findTableAt(source: string, position: number): SourceTableRange 
     const previousEnd = firstStart - 1;
     const previousStart = source.lastIndexOf("\n", Math.max(0, previousEnd - 1)) + 1;
     const text = source.slice(previousStart, previousEnd);
-    if (!text.includes("|")) break;
+    if (!isMarkdownTableRowLine(text)) break;
     lines.unshift({ start: previousStart, end: previousEnd, text });
     firstStart = previousStart;
   }
@@ -671,7 +888,7 @@ export function findTableAt(source: string, position: number): SourceTableRange 
     const nextBreak = source.indexOf("\n", nextStart);
     const nextEnd = nextBreak < 0 ? source.length : nextBreak;
     const text = source.slice(nextStart, nextEnd);
-    if (!text.includes("|")) break;
+    if (!isGeneratedMarkdownTableRowLine(text)) break;
     lines.push({ start: nextStart, end: nextEnd, text });
     lastEnd = nextEnd;
   }
@@ -728,11 +945,11 @@ function findTables(source: string): SourceTableRange[] {
   const { lines, offsets } = lineOffsets(source);
   const tables: SourceTableRange[] = [];
   for (let index = 0; index < lines.length - 1; index += 1) {
-    if (!lines[index].includes("|") || !lines[index + 1].includes("|")) continue;
+    if (!isMarkdownTableRowLine(lines[index]) || !isMarkdownTableRowLine(lines[index + 1])) continue;
     const separatorCells = splitTableRow(lines[index + 1]);
     if (!separatorCells.length || !separatorCells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))) continue;
     let last = index + 1;
-    while (last + 1 < lines.length && lines[last + 1].includes("|")) last += 1;
+    while (last + 1 < lines.length && isGeneratedMarkdownTableRowLine(lines[last + 1])) last += 1;
     const start = offsets[index] || 0;
     const end = start + lines.slice(index, last + 1).join("\n").length;
     tables.push({

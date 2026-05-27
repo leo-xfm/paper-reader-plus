@@ -25,6 +25,7 @@ import type {
   PromptTemplateStatus,
   PackageHealthReport,
   ConnectionTestResponse,
+  FormulaAnalysis,
   SymbolDefinition,
 } from "./types";
 
@@ -71,7 +72,8 @@ type MenuAction =
   | "settings-network-proxy"
   | "settings-file-associations"
   | "settings-system-prompt"
-  | "settings-summary-prompt";
+  | "settings-summary-prompt"
+  | "settings-analysis-prompt";
 
 declare global {
   interface Window {
@@ -98,11 +100,13 @@ declare global {
       updateDocumentViewState(documentId: string, viewState: DocumentViewState): Promise<DocumentViewState>;
       getDocumentHealth(documentId: string): Promise<PackageHealthReport>;
       getPdfData(documentId: string): Promise<ArrayBuffer>;
+      exportPdf(documentId: string): Promise<string | null>;
       updateDocumentTitle(documentId: string, title: string): Promise<LibraryDocument>;
       attachLatexSource(documentId: string): Promise<LibraryDocument>;
       getLatexSource(documentId: string): Promise<{ file_name: string; content: string }>;
       confirmDeleteDocument(title: string, fileName: string): Promise<"record" | "file" | null>;
-      confirmSymbolRefreshSource(): Promise<"latex" | "pdf" | null>;
+      confirmSymbolRefreshSource(): Promise<"latex" | "pdf" | "ai-pdf" | "ai-latex" | null>;
+      confirmSymbolAiApplyMode(): Promise<"complete" | "replace" | null>;
       confirmSymbolRefreshMode(): Promise<"preserve-user-state" | "reset" | null>;
       showDocumentContextMenu(documentId: string): Promise<{
         action: "open-file" | "show-in-folder" | "properties" | "cleanup" | "delete";
@@ -118,6 +122,8 @@ declare global {
       saveNote(documentId: string, content: string): Promise<string>;
       saveSummary(documentId: string, content: string): Promise<string>;
       saveSymbols(documentId: string, symbols: SymbolDefinition[]): Promise<SymbolDefinition[]>;
+      listFormulas(documentId: string): Promise<FormulaAnalysis[]>;
+      saveFormulas(documentId: string, formulas: FormulaAnalysis[]): Promise<FormulaAnalysis[]>;
       listParagraphTranslations(documentId: string): Promise<ParagraphTranslation[]>;
       saveParagraphTranslation(documentId: string, entry: ParagraphTranslationSaveRequest): Promise<ParagraphTranslation>;
       importImageAsset(documentId: string): Promise<MarkdownImageInsertResult | null>;

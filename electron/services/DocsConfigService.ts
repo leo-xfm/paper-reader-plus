@@ -7,13 +7,15 @@ export type DocsKeyConfig = {
   agent?: Array<Record<string, unknown>>;
 };
 
-export type TemplateName = "system" | "literature-read" | "literature-translate" | "literature-metaphor";
+export type TemplateName = "system" | "literature-read" | "literature-translate" | "literature-metaphor" | "literature-symbols" | "literature-formula";
 
 const TEMPLATE_FILES: Record<TemplateName, string> = {
   system: "system.j2",
   "literature-read": "literature-read.j2",
   "literature-translate": "literature-translate.j2",
   "literature-metaphor": "literature-metaphor.j2",
+  "literature-symbols": "literature-symbols.j2",
+  "literature-formula": "literature-formula.j2",
 };
 
 function candidateDocsDirs() {

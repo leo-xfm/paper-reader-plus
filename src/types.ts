@@ -80,6 +80,7 @@ export type DocumentContext = {
   ai_history?: ReaderPackageAiHistory;
   assets?: ReaderPackageAsset[];
   symbols?: SymbolDefinition[];
+  formulas?: FormulaAnalysis[];
   paragraph_translations?: ParagraphTranslation[];
   readerm_references?: ReadermReference[];
   referenced_documents?: LibraryDocument[];
@@ -240,6 +241,16 @@ export type ReaderContextPayload = {
   note: string;
   summary: string;
   evidences: ReaderEvidence[];
+  symbols?: SymbolDefinition[];
+  annotation_context?: string;
+  latex_content?: string;
+  symbol_source_mode?: "pdf" | "latex";
+  formula_mode?: "single" | "batch";
+  formula_latex?: string;
+  formula_raw_text?: string;
+  formula_context?: string;
+  formula_source_label?: string;
+  formula_candidates?: string;
   figure_attachments?: ReaderFigureAttachment[];
   summary_source?: {
     mode: SummarySourceMode;
@@ -300,12 +311,17 @@ export type Settings = {
   research_area: string;
   reader_prompt: string;
   summary_template: string;
+  symbol_template: string;
+  formula_template: string;
+  formula_context_char_limit: number;
+  formula_candidate_limit: number;
   copy_quote_template: string;
   quote_to_note_template: string;
   quote_to_readerm_template: string;
   pdf_paragraph_actions_enabled: boolean;
   pdf_author_graph_enabled: boolean;
   pdf_internal_link_preview_enabled: boolean;
+  pdf_formula_hover_enabled: boolean;
   summary_source: SummarySourceMode;
   summary_text_char_limit: number;
   summary_figure_attachment_limit: number;
@@ -358,7 +374,7 @@ export type ReadermPreviewPosition = "right" | "bottom";
 
 export type MarkdownEditorMode = "edit" | "live" | "preview";
 export type ReadermEditorMode = MarkdownEditorMode | "edit-preview";
-export type RightPanelTabKey = "annotations" | "notes" | "summary" | "symbols" | "ai";
+export type RightPanelTabKey = "annotations" | "notes" | "summary" | "symbols" | "formulas" | "ai";
 
 export type AiTextContentPart = {
   type: "text";
@@ -387,7 +403,7 @@ export type AiChatRequest = {
     annotation?: Annotation | null;
   } | null;
   reader_context?: ReaderContextPayload;
-  task?: "chat" | "translate" | "summary" | "metaphor";
+  task?: "chat" | "translate" | "summary" | "metaphor" | "symbols" | "formula";
 };
 
 export type AiChatResponse = {
@@ -440,7 +456,7 @@ export type SymbolDefinition = {
   normalized_symbol: string;
   kind: "symbol" | "abbreviation";
   definition: string;
-  source: "latex" | "pdf" | "grobid";
+  source: "latex" | "pdf" | "grobid" | "ai";
   page_index?: number;
   rects_pct?: RectPct[];
   paragraph?: string;
@@ -450,6 +466,28 @@ export type SymbolDefinition = {
   deleted?: boolean;
   user_modified?: boolean;
   updated_at?: string;
+};
+
+export type FormulaAnalysisStatus = "pending" | "parsed" | "error";
+
+export type FormulaAnalysis = {
+  formula_id: string;
+  document_id: string;
+  latex: string;
+  raw_text: string;
+  analysis: string;
+  source: "pdf" | "latex";
+  page_index?: number;
+  rects_pct?: RectPct[];
+  context?: string;
+  importance_score: number;
+  status: FormulaAnalysisStatus;
+  confidence?: number;
+  request_id?: string;
+  error?: string;
+  latex_line?: number;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AuthorPaperRef = {
@@ -517,6 +555,7 @@ export type ReaderPackageManifest = {
     symbols?: string;
     assets: string;
     assets_manifest?: string;
+    formulas?: string;
   };
 };
 

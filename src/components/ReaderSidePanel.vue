@@ -29,7 +29,7 @@ import { useI18n } from "@/i18n";
 import { markdownCodeFontFamily } from "@/services/MarkdownFontOptionsService";
 import { hasActiveAnnotationFilters, parseTagsInput, type AnnotationFilters } from "@/services/ReaderAnnotationService";
 import { displaySymbolText, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { AiRedoMode, Annotation, AnnotationType, MarkdownEditorMode, ReaderPackageAiHistory, ReaderPackageAiMessage, Settings, SymbolDefinition } from "@/types";
+import type { AiRedoMode, Annotation, AnnotationType, FormulaAnalysis, MarkdownEditorMode, ReaderPackageAiHistory, ReaderPackageAiMessage, Settings, SymbolDefinition } from "@/types";
 import type LiveMarkdownEditorComponent from "@/components/LiveMarkdownEditor.vue";
 
 const LiveMarkdownEditor = defineAsyncComponent(() => import("@/components/LiveMarkdownEditor.vue"));
@@ -55,6 +55,9 @@ const props = defineProps<{
   symbols: SymbolDefinition[];
   activeSymbol: string;
   symbolRefreshProgress: { status: string; percent?: number } | null;
+  formulas: FormulaAnalysis[];
+  activeFormulaId: string;
+  formulaRefreshProgress: { status: string; percent?: number } | null;
   settings?: Settings | null;
 }>();
 
@@ -88,6 +91,11 @@ const emit = defineEmits<{
   (event: "deleteSymbol", symbol: SymbolDefinition): void;
   (event: "setSymbolAnchor", symbol: SymbolDefinition): void;
   (event: "refreshSymbols"): void;
+  (event: "selectFormula", formula: FormulaAnalysis): void;
+  (event: "updateFormula", formula: FormulaAnalysis): void;
+  (event: "deleteFormula", formula: FormulaAnalysis): void;
+  (event: "reanalyzeFormula", formula: FormulaAnalysis): void;
+  (event: "refreshFormulas"): void;
   (event: "updateSettings", patch: Partial<Settings>): void;
 }>();
 
@@ -129,6 +137,18 @@ const filteredSymbols = computed(() => {
   if (symbolKey(right) === editingKey) return 1;
   return 0;
   });
+});
+
+const filteredFormulas = computed(() => {
+  const source = formulaSourceFilter.value;
+  const status = formulaStatusFilter.value;
+  return props.formulas
+    .filter((formula) => source === "all" || formula.source === source)
+    .filter((formula) => status === "all" || formula.status === status)
+    .sort((left, right) =>
+      right.importance_score - left.importance_score
+      || (left.page_index ?? left.latex_line ?? 0) - (right.page_index ?? right.latex_line ?? 0)
+    );
 });
 
 const summaryIsEmpty = computed(() => !props.summaryDraft.trim());
@@ -193,6 +213,10 @@ const symbolEditDraft = ref({ symbol: "", definition: "" });
 const draftSymbol = ref<SymbolDefinition | null>(null);
 const symbolKindFilter = ref<"all" | "symbol" | "abbreviation">("all");
 const symbolFavoriteFilter = ref<"all" | "favorite" | "unfavorite">("all");
+const formulaSourceFilter = ref<"all" | "pdf" | "latex">("all");
+const formulaStatusFilter = ref<"all" | "parsed" | "pending" | "error">("all");
+const editingFormulaId = ref("");
+const formulaEditDraft = ref({ latex: "", analysis: "" });
 const liveSelections = ref<Record<"notes" | "summary", { start: number; end: number } | undefined>>({
   notes: undefined,
   summary: undefined,
@@ -205,9 +229,21 @@ function resizeAiTextarea() {
   textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
+function waitForLayoutFrame() {
+  return new Promise<void>((resolve) => {
+    if (typeof window.requestAnimationFrame !== "function") {
+      resolve();
+      return;
+    }
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 async function scrollAiMessagesToBottom() {
   if (props.activeTab !== "ai") return;
   await nextTick();
+  await waitForLayoutFrame();
+  await waitForLayoutFrame();
   const root = aiMessagesRoot.value;
   if (!root) return;
   root.scrollTop = root.scrollHeight;
@@ -269,6 +305,7 @@ function isAiTurnThinking(turn: AiTurnView) {
 
 onMounted(() => {
   resizeAiTextarea();
+  void scrollAiMessagesToBottom();
   window.addEventListener("pointerdown", handleGlobalPointerDown);
 });
 
@@ -490,6 +527,45 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
     favorite: !symbol.favorite,
   });
 }
+
+function formulaSourceLabel(formula: FormulaAnalysis) {
+  if (formula.source === "pdf") return formula.page_index !== undefined ? `PDF ${t("common.page")} ${formula.page_index + 1}` : "PDF";
+  return formula.latex_line !== undefined ? `LaTeX line ${formula.latex_line}` : "LaTeX";
+}
+
+function formulaStatusLabel(formula: FormulaAnalysis) {
+  if (formula.status === "parsed") return t("formula.status.parsed");
+  if (formula.status === "pending") return t("formula.status.pending");
+  return t("formula.status.error");
+}
+
+function formulaLatexSource(formula: FormulaAnalysis) {
+  const latex = formula.latex || formula.raw_text;
+  return latex ? `$$\n${latex}\n$$` : formula.raw_text;
+}
+
+function startFormulaEdit(formula: FormulaAnalysis) {
+  editingFormulaId.value = formula.formula_id;
+  formulaEditDraft.value = {
+    latex: formula.latex,
+    analysis: formula.analysis,
+  };
+}
+
+function cancelFormulaEdit() {
+  editingFormulaId.value = "";
+}
+
+function saveFormulaEdit(formula: FormulaAnalysis) {
+  const latex = formulaEditDraft.value.latex.trim();
+  emit("updateFormula", {
+    ...formula,
+    latex,
+    analysis: formulaEditDraft.value.analysis.trim(),
+    status: formulaEditDraft.value.analysis.trim() ? "parsed" : formula.status,
+  });
+  editingFormulaId.value = "";
+}
 </script>
 
 <template>
@@ -698,6 +774,76 @@ function toggleSymbolFavorite(symbol: SymbolDefinition) {
       </article>
       <div v-if="!filteredSymbols.length" class="empty-state">
         {{ symbols.length ? t("symbol.emptyFiltered") : t("symbol.empty") }}
+      </div>
+    </section>
+
+    <section v-else-if="activeTab === 'formulas'" class="panel-body symbol-list formula-list">
+      <div class="symbol-panel-intro">
+        <div class="symbol-panel-title-row">
+          <strong>{{ t("formula.title") }}</strong>
+          <div class="symbol-panel-title-actions">
+            <button type="button" :title="t('formula.refresh')" :disabled="Boolean(formulaRefreshProgress)" @click="emit('refreshFormulas')"><RefreshCw :size="15" /></button>
+          </div>
+        </div>
+        <small>{{ t("formula.description") }}</small>
+        <div v-if="formulaRefreshProgress" class="arxiv-import-progress symbol-progress" role="status" aria-live="polite">
+          <div class="arxiv-import-progress-header">
+            <span>{{ formulaRefreshProgress.status }}</span>
+            <span v-if="formulaRefreshProgress.percent !== undefined">{{ formulaRefreshProgress.percent }}%</span>
+          </div>
+          <div class="arxiv-import-progress-track">
+            <div class="arxiv-import-progress-fill" :style="{ width: `${formulaRefreshProgress.percent ?? 18}%` }"></div>
+          </div>
+        </div>
+        <div class="symbol-filter-bar">
+          <div class="symbol-segmented-filter" role="group" :aria-label="t('formula.sourceFilter')">
+            <button type="button" :class="{ active: formulaSourceFilter === 'all' }" @click="formulaSourceFilter = 'all'">{{ t("formula.filter.all") }}</button>
+            <button type="button" :class="{ active: formulaSourceFilter === 'pdf' }" @click="formulaSourceFilter = 'pdf'">PDF</button>
+            <button type="button" :class="{ active: formulaSourceFilter === 'latex' }" @click="formulaSourceFilter = 'latex'">LaTeX</button>
+          </div>
+          <div class="symbol-segmented-filter" role="group" :aria-label="t('formula.statusFilter')">
+            <button type="button" :class="{ active: formulaStatusFilter === 'all' }" @click="formulaStatusFilter = 'all'">{{ t("formula.filter.all") }}</button>
+            <button type="button" :class="{ active: formulaStatusFilter === 'parsed' }" @click="formulaStatusFilter = 'parsed'">{{ t("formula.status.parsed") }}</button>
+            <button type="button" :class="{ active: formulaStatusFilter === 'pending' }" @click="formulaStatusFilter = 'pending'">{{ t("formula.status.pending") }}</button>
+            <button type="button" :class="{ active: formulaStatusFilter === 'error' }" @click="formulaStatusFilter = 'error'">{{ t("formula.status.error") }}</button>
+          </div>
+        </div>
+      </div>
+      <article
+        v-for="formula in filteredFormulas"
+        :key="formula.formula_id"
+        class="symbol-card formula-card"
+        :class="{ active: activeFormulaId === formula.formula_id, error: formula.status === 'error' }"
+        @click="emit('selectFormula', formula)"
+      >
+        <div class="symbol-card-header">
+          <div class="formula-card-heading">
+            <span class="symbol-card-meta">{{ formulaSourceLabel(formula) }} / {{ formulaStatusLabel(formula) }} / {{ Math.round(formula.importance_score * 100) }}%</span>
+          </div>
+          <div class="symbol-card-actions" @click.stop>
+            <template v-if="editingFormulaId === formula.formula_id">
+              <button type="button" :title="t('common.save')" @click="saveFormulaEdit(formula)"><Check :size="15" /></button>
+              <button type="button" :title="t('common.cancel')" @click="cancelFormulaEdit"><X :size="15" /></button>
+            </template>
+            <template v-else>
+              <button type="button" :title="t('formula.reanalyze')" @click="emit('reanalyzeFormula', formula)"><RefreshCw :size="15" /></button>
+              <button type="button" :title="t('common.edit')" @click="startFormulaEdit(formula)"><Pencil :size="15" /></button>
+              <button type="button" :title="t('common.delete')" @click="emit('deleteFormula', formula)"><Trash2 :size="15" /></button>
+            </template>
+          </div>
+        </div>
+        <template v-if="editingFormulaId === formula.formula_id">
+          <textarea v-model="formulaEditDraft.latex" class="symbol-card-definition-input formula-latex-input" @click.stop />
+          <textarea v-model="formulaEditDraft.analysis" class="symbol-card-definition-input" @click.stop />
+        </template>
+        <template v-else>
+          <MarkdownPreview class="symbol-card-definition formula-latex-preview" :source="formulaLatexSource(formula)" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
+          <MarkdownPreview v-if="formula.analysis" class="symbol-card-definition formula-analysis-preview" :source="formula.analysis" :document-id="documentId" :settings="settings" @link-click="emit('linkClick', $event)" />
+          <p v-if="formula.error" class="formula-card-error">{{ formula.error }}</p>
+        </template>
+      </article>
+      <div v-if="!filteredFormulas.length" class="empty-state">
+        {{ formulas.length ? t("formula.emptyFiltered") : t("formula.empty") }}
       </div>
     </section>
 

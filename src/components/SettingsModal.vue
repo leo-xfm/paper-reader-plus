@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n";
 import { markdownChineseFontOptions, markdownCodeFontOptions, markdownWesternFontOptions } from "@/services/MarkdownFontOptionsService";
 import type { FileAssociationExtension, FileAssociationStatus, PromptTemplateStatus, Settings } from "@/types";
 
-export type SettingsPanel = "general" | "pdf" | "markdown" | "agent-api" | "ocr-api" | "translation-api" | "file-associations" | "system-prompt" | "summary-prompt";
+export type SettingsPanel = "general" | "pdf" | "markdown" | "agent-api" | "ocr-api" | "translation-api" | "file-associations" | "system-prompt" | "summary-prompt" | "analysis-prompt";
 
 defineProps<{
   panel: SettingsPanel;
@@ -100,6 +100,10 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
           <label class="settings-checkbox">
             <input v-model="settings.pdf_internal_link_preview_enabled" type="checkbox" />
             <span>{{ t("settings.pdfInternalLinkPreview") }}</span>
+          </label>
+          <label class="settings-checkbox">
+            <input :checked="false" type="checkbox" disabled />
+            <span>{{ t("settings.pdfFormulaHover") }}</span>
           </label>
         </div>
       </div>
@@ -473,7 +477,7 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
       </div>
     </section>
 
-    <section v-else class="modal settings-modal prompt-settings-modal">
+    <section v-else-if="panel === 'summary-prompt'" class="modal settings-modal prompt-settings-modal">
       <header class="settings-modal-header">
         <h2>{{ t("settings.summaryPrompt") }}</h2>
         <p class="modal-meta">{{ t("settings.summaryDescription") }}</p>
@@ -506,6 +510,51 @@ function fileAssociationStateLabel(item: FileAssociationStatus["associations"][n
       </label>
       <div class="template-status-list">
         <article v-for="template in promptTemplatePreview.filter((item) => item.name === 'literature-read' || item.name === 'system')" :key="template.name" class="template-status-card">
+          <strong>{{ template.fileName }}</strong>
+          <span>{{ template.available ? t("common.loaded") : t("common.missing") }}</span>
+          <small>{{ template.path }}</small>
+          <pre>{{ template.preview }}</pre>
+        </article>
+      </div>
+      <div class="modal-actions">
+        <button type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" class="primary" @click="emit('save')">{{ t("common.save") }}</button>
+      </div>
+    </section>
+
+    <section v-else class="modal settings-modal prompt-settings-modal">
+      <header class="settings-modal-header">
+        <h2>{{ t("settings.analysisPrompt") }}</h2>
+        <p class="modal-meta">{{ t("settings.analysisDescription") }}</p>
+      </header>
+      <div class="settings-general-section">
+        <h3>{{ t("settings.symbolPrompt") }}</h3>
+        <small>{{ t("settings.symbolDescription") }}</small>
+        <label class="prompt-template-editor">
+          {{ t("settings.symbolTemplate") }}
+          <textarea v-model="settings.symbol_template" rows="18" spellcheck="false" />
+        </label>
+      </div>
+      <div class="settings-general-section">
+        <h3>{{ t("settings.formulaPrompt") }}</h3>
+        <small>{{ t("settings.formulaDescription") }}</small>
+        <label>
+          {{ t("settings.formulaContextCharLimit") }}
+          <input v-model.number="settings.formula_context_char_limit" type="number" min="10000" max="2000000" step="1000" />
+          <small>{{ t("settings.formulaContextCharLimitDescription") }}</small>
+        </label>
+        <label>
+          {{ t("settings.formulaCandidateLimit") }}
+          <input v-model.number="settings.formula_candidate_limit" type="number" min="20" max="1000" step="10" />
+          <small>{{ t("settings.formulaCandidateLimitDescription") }}</small>
+        </label>
+        <label class="prompt-template-editor">
+          {{ t("settings.formulaTemplate") }}
+          <textarea v-model="settings.formula_template" rows="18" spellcheck="false" />
+        </label>
+      </div>
+      <div class="template-status-list">
+        <article v-for="template in promptTemplatePreview.filter((item) => item.name === 'literature-symbols' || item.name === 'literature-formula' || item.name === 'system')" :key="template.name" class="template-status-card">
           <strong>{{ template.fileName }}</strong>
           <span>{{ template.available ? t("common.loaded") : t("common.missing") }}</span>
           <small>{{ template.path }}</small>

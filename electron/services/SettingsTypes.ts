@@ -9,12 +9,17 @@ export type Settings = {
   research_area: string;
   reader_prompt: string;
   summary_template: string;
+  symbol_template: string;
+  formula_template: string;
+  formula_context_char_limit: number;
+  formula_candidate_limit: number;
   copy_quote_template: string;
   quote_to_note_template: string;
   quote_to_readerm_template: string;
   pdf_paragraph_actions_enabled: boolean;
   pdf_author_graph_enabled: boolean;
   pdf_internal_link_preview_enabled: boolean;
+  pdf_formula_hover_enabled: boolean;
   summary_source: "pdf-direct" | "pdf-extractor" | "latex";
   summary_text_char_limit: number;
   summary_figure_attachment_limit: number;

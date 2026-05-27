@@ -346,7 +346,7 @@ export function mergeSymbolDefinitions(...groups: SymbolDefinition[][]) {
   const ranked = groups.flat().sort((left, right) => {
     if (left.user_modified !== right.user_modified) return left.user_modified ? -1 : 1;
     if (left.deleted !== right.deleted) return left.deleted ? -1 : 1;
-    const sourceRank = { latex: 3, grobid: 2, pdf: 1 };
+    const sourceRank = { latex: 4, ai: 3, grobid: 2, pdf: 1 };
     return sourceRank[right.source] - sourceRank[left.source] || right.confidence - left.confidence;
   });
   const seen = new Set<string>();
@@ -401,6 +401,85 @@ export function applySymbolRefresh(
 
   refreshed.push(...deleted.values());
   return refreshed;
+}
+
+export function applyAiSymbolCompletion(currentSaved: SymbolDefinition[], generated: SymbolDefinition[]) {
+  const next = currentSaved.map((symbol) => ({ ...symbol }));
+  const byKey = new Map(next.map((symbol) => [symbol.normalized_symbol, symbol]));
+  for (const symbol of generated) {
+    const existing = byKey.get(symbol.normalized_symbol);
+    if (!existing) {
+      next.push({
+        ...symbol,
+        source: "ai",
+        favorite: false,
+        deleted: false,
+        user_modified: false,
+        updated_at: undefined,
+      });
+      continue;
+    }
+    if (existing.deleted || existing.definition.trim()) continue;
+    Object.assign(existing, {
+      definition: symbol.definition,
+      paragraph: symbol.paragraph || existing.paragraph,
+      page_index: existing.page_index ?? symbol.page_index,
+      rects_pct: existing.rects_pct?.length ? existing.rects_pct : symbol.rects_pct,
+      confidence: Math.max(existing.confidence, symbol.confidence),
+      updated_at: undefined,
+    });
+  }
+  return next;
+}
+
+function parseJsonCandidate(content: string): unknown {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) return JSON.parse(fenced[1].trim());
+    const start = trimmed.indexOf("[");
+    const end = trimmed.lastIndexOf("]");
+    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
+    throw new Error("AI symbol response is not valid JSON.");
+  }
+}
+
+function cleanAiConfidence(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0.72;
+  return Math.min(1, Math.max(0, number));
+}
+
+export function parseAiSymbolDefinitions(content: string): SymbolDefinition[] {
+  const parsed = parseJsonCandidate(content);
+  const rows: unknown[] = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).symbols)
+      ? (parsed as Record<string, unknown>).symbols as unknown[]
+      : [];
+  const definitions: SymbolDefinition[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const symbol = String(record.symbol || "").trim();
+    const definition = String(record.definition || "").trim();
+    if (!symbol || !definition) continue;
+    const pageNumber = Number(record.page_number);
+    pushUnique(definitions, {
+      symbol,
+      normalized_symbol: normalizeSymbol(symbol),
+      kind: record.kind === "abbreviation" ? "abbreviation" : "symbol",
+      definition,
+      source: "ai",
+      page_index: Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber - 1 : undefined,
+      paragraph: typeof record.paragraph === "string" ? cleanText(record.paragraph) : undefined,
+      confidence: cleanAiConfidence(record.confidence),
+    });
+  }
+  return definitions;
 }
 
 export function findSymbolDefinition(definitions: SymbolDefinition[], symbol: string) {

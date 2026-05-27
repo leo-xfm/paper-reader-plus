@@ -162,6 +162,45 @@
   margin: 6px 0;
 }
 
+.formula-card-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.formula-card.error {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.formula-latex-preview.markdown-preview,
+.formula-analysis-preview.markdown-preview {
+  padding: 0;
+}
+
+.formula-latex-preview {
+  overflow-x: auto;
+}
+
+.formula-latex-preview .katex-display {
+  margin: 2px 0 8px;
+}
+
+.formula-analysis-preview {
+  color: #374151;
+}
+
+.formula-card-error {
+  margin: 8px 0 0;
+  color: #991b1b;
+  font-size: var(--font-size-meta);
+  overflow-wrap: anywhere;
+}
+
+.formula-latex-input {
+  min-height: 64px;
+  font-family: Cambria, "Times New Roman", serif;
+}
+
 .annotation-card textarea {
   width: 100%;
   min-height: 58px;
