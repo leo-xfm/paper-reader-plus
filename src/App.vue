@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { FilePlus2, FileText, Highlighter, PanelRightOpen, Underline } from "lucide-vue-next";
+import { BookOpen, FilePlus, FilePlus2, FileText, Highlighter, PanelRightOpen, Underline } from "lucide-vue-next";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import PdfWorkspace from "@/components/PdfWorkspace.vue";
@@ -41,7 +41,7 @@ import { parseReaderAnchorHref, parseReaderDocumentHref, type ReaderDocumentView
 import { ANNOTATION_COLORS, annotationMatchesFilters, sortAnnotations, type AnnotationFilters, type AnnotationToolMode } from "@/services/ReaderAnnotationService";
 import { buildAuthorNetwork, type AuthorDocumentInput } from "@/services/AuthorNetworkService";
 import { findSymbolDefinition, normalizeSymbol } from "@/services/SymbolTrackerService";
-import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, DocumentViewState, FileAssociationExtension, FileAssociationStatus, FormulaAnalysis, LibraryDocument, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
+import type { AiChatRequest, Anchor, Annotation, AnnotationType, AuthorHoverPreview, DictionaryEntry, DictionaryHoverPreview, DocumentContext, DocumentViewState, FileAssociationExtension, FileAssociationStatus, FormulaAnalysis, LibraryDocument, LibraryGroup, LibrarySearchResult, MarkdownEditorMode, PackageHealthReport, PromptTemplateStatus, ReaderPackageAiHistory, ReadermEditorMode, ReadermReference, RectPct, Settings, SymbolDefinition } from "@/types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -49,6 +49,24 @@ const { t } = useI18n();
 const isHelpPage = new URLSearchParams(window.location.search).has("help");
 
 const documents = ref<LibraryDocument[]>([]);
+const groups = ref<LibraryGroup[]>([]);
+const selectedLibraryDocumentIds = ref<string[]>([]);
+const lastSelectedLibraryDocumentId = ref("");
+const recentGroupId = ref("default");
+const groupNameDialog = ref<{
+  open: boolean;
+  title: string;
+  value: string;
+  confirmLabel: string;
+  onConfirm: (name: string) => Promise<void> | void;
+} | null>(null);
+type GroupContextAction = "create-group" | "rename-group" | "delete-group" | "delete-history";
+const groupContextMenu = ref<{
+  group: LibraryGroup;
+  x: number;
+  y: number;
+} | null>(null);
+const groupRenameRequest = ref<{ groupId: string; requestId: number } | null>(null);
 const healthReports = ref<Record<string, PackageHealthReport | undefined>>({});
 const {
   librarySearchQuery,
@@ -234,6 +252,7 @@ const libraryResizeHandleWidth = 4;
 const libraryWidthMin = 220;
 const libraryWidthMax = 420;
 const readermResizeHandleWidth = 3;
+const resizeDragUpdateIntervalMs = 50;
 const libraryStyle = computed(() => ({
   "--library-width": `${clampLibraryWidth(libraryWidth.value)}px`,
 }));
@@ -270,6 +289,29 @@ const annotationCommentEditorStyle = computed(() => {
     left: `${Math.min(Math.max(12, editor.position.left), Math.max(12, window.innerWidth - 392))}px`,
     top: `${Math.min(Math.max(12, editor.position.top), Math.max(12, window.innerHeight - 216))}px`,
   };
+});
+const groupContextMenuStyle = computed(() => {
+  const menu = groupContextMenu.value;
+  if (!menu) return {};
+  const menuWidth = 204;
+  const menuHeight = 142;
+  return {
+    left: `${Math.min(Math.max(8, menu.x), Math.max(8, window.innerWidth - menuWidth - 8))}px`,
+    top: `${Math.min(Math.max(8, menu.y), Math.max(8, window.innerHeight - menuHeight - 8))}px`,
+  };
+});
+const groupContextMenuItems = computed(() => {
+  const menu = groupContextMenu.value;
+  if (!menu) return [];
+  const isDefault = menu.group.group_id === "default";
+  return [
+    { action: "create-group" as const, label: t("library.newGroup"), danger: false },
+    ...isDefault ? [] : [
+      { action: "rename-group" as const, label: t("library.renameGroup"), danger: false },
+      { action: "delete-group" as const, label: t("library.deleteGroupOnly"), danger: false },
+    ],
+    { action: "delete-history" as const, label: t("library.deleteGroupHistory"), danger: true },
+  ];
 });
 const {
   refreshDocuments,
@@ -793,6 +835,21 @@ async function refreshDocumentHealth(documentId: string) {
   }
 }
 
+async function refreshGroups() {
+  const api = paperReaderPlusApi();
+  if (typeof api.listGroups !== "function") {
+    groups.value = [{
+      group_id: "default",
+      name: "Default",
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+      readonly: true,
+    }];
+    return;
+  }
+  groups.value = await api.listGroups();
+}
+
 async function refreshVisibleHealth() {
   const entries = await Promise.all(documents.value.map(async (document) => {
     try {
@@ -804,20 +861,70 @@ async function refreshVisibleHealth() {
   healthReports.value = Object.fromEntries(entries);
 }
 
+function paperReaderPlusApi() {
+  return window.paperReaderPlus as typeof window.paperReaderPlus & {
+    markDocumentOpened?: (documentId: string) => Promise<LibraryDocument>;
+    setDocumentPinned?: (documentId: string, pinned: boolean) => Promise<LibraryDocument>;
+    listGroups?: () => Promise<LibraryGroup[]>;
+    createGroup?: (name: string) => Promise<LibraryGroup>;
+    renameGroup?: (groupId: string, name: string) => Promise<LibraryGroup>;
+    deleteGroup?: (groupId: string, mode: "group-only" | "history-records") => Promise<{ removed: number }>;
+    moveDocumentsToGroup?: (documentIds: string[], groupId: string | null) => Promise<LibraryDocument[]>;
+  };
+}
+
+async function markDocumentOpenedIfAvailable(documentId: string) {
+  const openedAt = new Date().toISOString();
+  const document = documents.value.find((item) => item.document_id === documentId);
+  recentGroupId.value = document?.group_id || "default";
+  documents.value = documents.value.map((item) =>
+    item.document_id === documentId ? { ...item, last_opened_at: openedAt } : item,
+  );
+  const api = paperReaderPlusApi();
+  if (typeof api.markDocumentOpened !== "function") return false;
+  await api.markDocumentOpened(documentId);
+  return true;
+}
+
 async function openDocument(documentId: string) {
   if (!documentId) return;
   if (selectedDocumentId.value === documentId && context.value) {
     addOpenDocumentTab(documentId);
+    if (await markDocumentOpenedIfAvailable(documentId)) await refreshDocuments();
     return;
   }
   await saveCurrentViewStateNow();
   cacheCurrentDocumentDraft();
   await flushMarkdownAutosave(selectedDocumentId.value);
+  if (await markDocumentOpenedIfAvailable(documentId)) await refreshDocuments();
   addOpenDocumentTab(documentId);
   await loadDocument(documentId);
   ensureLoadedDocumentCache();
   await restoreCurrentDocumentViewState();
   await refreshDocumentHealth(documentId);
+}
+
+async function toggleDocumentPinned(document: LibraryDocument) {
+  const previousDocuments = documents.value;
+  const optimisticPinnedAt = document.pinned_at ? undefined : new Date().toISOString();
+  documents.value = documents.value.map((item) =>
+    item.document_id === document.document_id ? { ...item, pinned_at: optimisticPinnedAt } : item,
+  );
+  try {
+    const api = paperReaderPlusApi();
+    if (typeof api.setDocumentPinned !== "function") return;
+    const nextDocument = await api.setDocumentPinned(document.document_id, !document.pinned_at);
+    documents.value = documents.value.map((item) =>
+      item.document_id === nextDocument.document_id ? { ...item, ...nextDocument } : item,
+    );
+    if (context.value?.document.document_id === nextDocument.document_id) {
+      context.value.document = { ...context.value.document, pinned_at: nextDocument.pinned_at };
+    }
+    await refreshDocuments();
+  } catch (cause) {
+    documents.value = previousDocuments;
+    throw cause;
+  }
 }
 
 function clearActiveDocumentState() {
@@ -1021,14 +1128,15 @@ async function deleteDocument(document: LibraryDocument) {
   documentDraftCache.value = remainingCache;
 }
 
-function documentMatchesHistoryMode(document: LibraryDocument, mode: "readerp" | "readerm") {
+function documentMatchesHistoryMode(document: LibraryDocument, mode: "readerp" | "readerm" | "all") {
+  if (mode === "all") return true;
   return mode === "readerm" ? document.source_type === "readerm" : document.source_type !== "readerm";
 }
 
-async function clearHistory(mode: "readerp" | "readerm") {
+async function clearHistory(mode: "readerp" | "readerm" | "all") {
   const count = documents.value.filter((document) => documentMatchesHistoryMode(document, mode)).length;
   if (!count) return;
-  const confirmed = window.confirm(t(mode === "readerm" ? "library.clearReadermHistoryConfirm" : "library.clearReaderpHistoryConfirm", { count }));
+  const confirmed = window.confirm(t(mode === "all" ? "library.clearAllHistoryConfirm" : mode === "readerm" ? "library.clearReadermHistoryConfirm" : "library.clearReaderpHistoryConfirm", { count }));
   if (!confirmed) return;
   try {
     const result = await window.paperReaderPlus.clearDocumentHistory(mode);
@@ -1217,6 +1325,123 @@ async function downloadCurrentPdf() {
   }
 }
 
+function visibleLibraryDocuments() {
+  return documents.value;
+}
+
+function selectLibraryDocument(payload: { document: LibraryDocument; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) {
+  const documentId = payload.document.document_id;
+  if (payload.shiftKey && lastSelectedLibraryDocumentId.value) {
+    const visible = visibleLibraryDocuments();
+    const start = visible.findIndex((item) => item.document_id === lastSelectedLibraryDocumentId.value);
+    const end = visible.findIndex((item) => item.document_id === documentId);
+    if (start >= 0 && end >= 0) {
+      const [from, to] = start < end ? [start, end] : [end, start];
+      selectedLibraryDocumentIds.value = visible.slice(from, to + 1).map((item) => item.document_id);
+      return;
+    }
+  }
+  if (payload.ctrlKey || payload.metaKey) {
+    const selected = new Set(selectedLibraryDocumentIds.value);
+    if (selected.has(documentId)) selected.delete(documentId);
+    else selected.add(documentId);
+    selectedLibraryDocumentIds.value = [...selected];
+    lastSelectedLibraryDocumentId.value = documentId;
+    return;
+  }
+  selectedLibraryDocumentIds.value = [documentId];
+  lastSelectedLibraryDocumentId.value = documentId;
+}
+
+async function moveDocumentsToGroup(documentIds: string[], groupId: string | null) {
+  const api = paperReaderPlusApi();
+  if (typeof api.moveDocumentsToGroup !== "function") return;
+  const moved = await api.moveDocumentsToGroup(documentIds, groupId);
+  const byId = new Map(moved.map((document) => [document.document_id, document]));
+  documents.value = documents.value.map((document) => byId.get(document.document_id) || document);
+  recentGroupId.value = groupId || "default";
+}
+
+function openGroupNameDialog(options: {
+  title: string;
+  value?: string;
+  confirmLabel?: string;
+  onConfirm: (name: string) => Promise<void> | void;
+}) {
+  groupNameDialog.value = {
+    open: true,
+    title: options.title,
+    value: options.value || "",
+    confirmLabel: options.confirmLabel || t("common.save"),
+    onConfirm: options.onConfirm,
+  };
+}
+
+async function confirmGroupNameDialog() {
+  const dialog = groupNameDialog.value;
+  const clean = dialog?.value.trim().replace(/\s+/g, " ");
+  if (!dialog || !clean) {
+    groupNameDialog.value = null;
+    return;
+  }
+  try {
+    await dialog.onConfirm(clean);
+    groupNameDialog.value = null;
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+function cancelGroupNameDialog() {
+  groupNameDialog.value = null;
+}
+
+async function createGroup(name: string) {
+  const api = paperReaderPlusApi();
+  if (typeof api.createGroup !== "function") return;
+  const group = await api.createGroup(name);
+  recentGroupId.value = group.group_id;
+  await refreshGroups();
+}
+
+function promptCreateGroupAndMove(documentIds: string[]) {
+  openGroupNameDialog({
+    title: t("library.groupNamePrompt"),
+    confirmLabel: t("common.save"),
+    onConfirm: async (name) => {
+      const api = paperReaderPlusApi();
+      if (typeof api.createGroup !== "function") return;
+      const group = await api.createGroup(name);
+      recentGroupId.value = group.group_id;
+      await refreshGroups();
+      await moveDocumentsToGroup(documentIds, group.group_id);
+    },
+  });
+}
+
+async function renameGroup(group: LibraryGroup, name: string) {
+  const api = paperReaderPlusApi();
+  if (typeof api.renameGroup !== "function") return;
+  await api.renameGroup(group.group_id, name);
+  await refreshGroups();
+}
+
+function openCreateGroupDialog() {
+  openGroupNameDialog({
+    title: t("library.groupNamePrompt"),
+    confirmLabel: t("common.save"),
+    onConfirm: createGroup,
+  });
+}
+
+async function handleMoveDocumentsToGroup(payload: { documentIds: string[]; groupId: string | null }) {
+  try {
+    await moveDocumentsToGroup(payload.documentIds, payload.groupId);
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
 async function exportMarkdownReaderPackage() {
   cacheCurrentDocumentDraft();
   if (context.value) {
@@ -1241,6 +1466,7 @@ onMounted(async () => {
   unsubscribeOpenFileRequest = window.paperReaderPlus.onOpenFileRequest((documentId) => void handleOpenFileRequest(documentId));
   await loadSettings();
   await loadDictionary();
+  await refreshGroups();
   await refreshDocuments();
 });
 
@@ -1380,6 +1606,7 @@ function handleKeydown(event: KeyboardEvent) {
     return;
   }
   if (event.key !== "Escape") return;
+  closeGroupContextMenu();
   annotationToolMode.value = "select";
   pendingImageInsert.value = null;
   selectionState.value = null;
@@ -1404,6 +1631,8 @@ async function saveCurrentDocumentFromShortcut() {
 function handleGlobalPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  if (target.closest(".group-context-menu")) return;
+  closeGroupContextMenu();
   if (target.closest(".annotation-comment-popover")) return;
   if (annotationCommentEditor.value) void saveAnnotationCommentEditor();
   if (target.closest(".selection-toolbar, .reference-preview, .popover, .pdf-toolbar, .app-menu, .modal, .pdf-paragraph-action, .pdf-paragraph-menu")) return;
@@ -1622,9 +1851,20 @@ async function showDocumentProperties(document: LibraryDocument) {
   }
 }
 
-async function handleDocumentContextMenu(document: LibraryDocument) {
+async function handleDocumentContextMenu(payload: { document: LibraryDocument; selectedDocumentIds: string[] }) {
+  const document = payload.document;
+  const selectedDocumentIds = payload.selectedDocumentIds;
   try {
-    const result = await window.paperReaderPlus.showDocumentContextMenu(document.document_id);
+    const result = await window.paperReaderPlus.showDocumentContextMenu(document.document_id, selectedDocumentIds);
+    if (result?.action === "move-to-group") {
+      await refreshDocuments();
+      recentGroupId.value = result.groupId || "default";
+      return;
+    }
+    if (result?.action === "create-group-and-move") {
+      await promptCreateGroupAndMove(result.documentIds || [result.documentId]);
+      return;
+    }
     if (result?.action === "cleanup") {
       if (selectedDocumentId.value === result.documentId) {
         context.value = await window.paperReaderPlus.getDocumentContext(result.documentId);
@@ -1635,14 +1875,89 @@ async function handleDocumentContextMenu(document: LibraryDocument) {
       return;
     }
     if (result?.action !== "delete") return;
-    if (selectedDocumentId.value === result.documentId) {
+    const deletedIds = result.documentIds || [result.documentId];
+    if (deletedIds.includes(selectedDocumentId.value)) {
       clearActiveDocumentState();
     }
-    closeOpenDocumentTab(result.documentId);
-    const { [result.documentId]: _deleted, ...remainingCache } = documentDraftCache.value;
-    documentDraftCache.value = remainingCache;
+    for (const documentId of deletedIds) closeOpenDocumentTab(documentId);
+    documentDraftCache.value = Object.fromEntries(
+      Object.entries(documentDraftCache.value).filter(([documentId]) => !deletedIds.includes(documentId)),
+    );
+    selectedLibraryDocumentIds.value = selectedLibraryDocumentIds.value.filter((documentId) => !deletedIds.includes(documentId));
     await refreshDocuments();
     showNotice(result.mode === "file" ? "File deleted" : "History record deleted");
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+function fallbackDefaultGroup(): LibraryGroup {
+  return groups.value.find((group) => group.group_id === "default") || {
+    group_id: "default",
+    name: "Default",
+    created_at: new Date(0).toISOString(),
+    updated_at: new Date(0).toISOString(),
+    readonly: true,
+  };
+}
+
+function closeGroupContextMenu() {
+  groupContextMenu.value = null;
+}
+
+function openGroupContextMenu(group: LibraryGroup, x: number, y: number) {
+  groupContextMenu.value = { group, x, y };
+}
+
+async function runGroupContextAction(group: LibraryGroup, action: GroupContextAction) {
+  const isDefault = group.group_id === "default";
+  const api = paperReaderPlusApi();
+  closeGroupContextMenu();
+  if (action === "create-group") {
+    openCreateGroupDialog();
+    return;
+  }
+  if (!isDefault && action === "rename-group") {
+    groupRenameRequest.value = { groupId: group.group_id, requestId: Date.now() };
+    return;
+  }
+  if (!isDefault && action === "delete-group") {
+    if (typeof api.deleteGroup !== "function") return;
+    await api.deleteGroup(group.group_id, "group-only");
+    await refreshGroups();
+    await refreshDocuments();
+    return;
+  }
+  if (action === "delete-history") {
+    if (!window.confirm(t("library.deleteGroupHistoryConfirm"))) return;
+    if (typeof api.deleteGroup !== "function") return;
+    await api.deleteGroup(group.group_id, "history-records");
+    await refreshGroups();
+    await refreshDocuments();
+  }
+}
+
+async function handleGroupContextMenuAction(action: GroupContextAction) {
+  const group = groupContextMenu.value?.group;
+  if (!group) return;
+  try {
+    await runGroupContextAction(group, action);
+  } catch (cause) {
+    showNotice(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+function handleGroupContextMenu(payload: { group: LibraryGroup; x: number; y: number }) {
+  openGroupContextMenu(payload.group, payload.x, payload.y);
+}
+
+function handleLibraryContextMenu(payload: { x: number; y: number }) {
+  openGroupContextMenu(fallbackDefaultGroup(), payload.x, payload.y);
+}
+
+async function handleRenameGroupInline(payload: { group: LibraryGroup; name: string }) {
+  try {
+    await renameGroup(payload.group, payload.name);
   } catch (cause) {
     showNotice(cause instanceof Error ? cause.message : String(cause));
   }
@@ -2001,6 +2316,54 @@ function clampLibraryWidth(width: number) {
   return Math.min(libraryWidthMax, Math.max(libraryWidthMin, width));
 }
 
+function createResizeDragThrottle(apply: (width: number) => void) {
+  let latestWidth: number | null = null;
+  let lastAppliedAt = 0;
+  let timer: number | null = null;
+
+  const flush = () => {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+    if (latestWidth === null) return;
+    lastAppliedAt = performance.now();
+    apply(latestWidth);
+  };
+
+  return {
+    update(width: number) {
+      latestWidth = width;
+      const remaining = resizeDragUpdateIntervalMs - (performance.now() - lastAppliedAt);
+      if (remaining <= 0) {
+        flush();
+        return;
+      }
+      if (timer === null) timer = window.setTimeout(flush, remaining);
+    },
+    flush,
+  };
+}
+
+function createResizeDragGuide(initialClientX: number) {
+  const guide = document.createElement("div");
+  guide.className = "resize-drag-guide";
+  document.body.appendChild(guide);
+
+  const move = (clientX: number) => {
+    guide.style.left = `${Math.round(clientX)}px`;
+  };
+
+  move(initialClientX);
+
+  return {
+    move,
+    remove() {
+      guide.remove();
+    },
+  };
+}
+
 function startLibraryResize(event: PointerEvent) {
   if (libraryCollapsed.value) return;
   event.preventDefault();
@@ -2009,12 +2372,20 @@ function startLibraryResize(event: PointerEvent) {
   document.body.classList.add("resizing");
   const startX = event.clientX;
   const startWidth = libraryWidth.value;
+  const throttledResize = createResizeDragThrottle((width) => {
+    libraryWidth.value = width;
+  });
+  const dragGuide = createResizeDragGuide(event.clientX);
 
   const onMove = (moveEvent: PointerEvent) => {
     const delta = moveEvent.clientX - startX;
-    libraryWidth.value = clampLibraryWidth(startWidth + delta);
+    const width = clampLibraryWidth(startWidth + delta);
+    dragGuide.move(startX + width - startWidth);
+    throttledResize.update(width);
   };
   const onUp = (upEvent: PointerEvent) => {
+    throttledResize.flush();
+    dragGuide.remove();
     if (handle.hasPointerCapture(upEvent.pointerId)) handle.releasePointerCapture(upEvent.pointerId);
     document.body.classList.remove("resizing");
     window.removeEventListener("pointermove", onMove);
@@ -2056,12 +2427,20 @@ function startReadermResize(event: PointerEvent) {
   document.body.classList.add("resizing");
   const startX = event.clientX;
   const startWidth = readermPdfPaneWidth.value;
+  const throttledResize = createResizeDragThrottle((width) => {
+    readermPdfPaneWidth.value = width;
+  });
+  const dragGuide = createResizeDragGuide(event.clientX);
 
   const onMove = (moveEvent: PointerEvent) => {
     const delta = startX - moveEvent.clientX;
-    readermPdfPaneWidth.value = clampReadermPdfPaneWidth(startWidth + delta);
+    const width = clampReadermPdfPaneWidth(startWidth + delta);
+    dragGuide.move(startX - (width - startWidth));
+    throttledResize.update(width);
   };
   const onUp = (upEvent: PointerEvent) => {
+    throttledResize.flush();
+    dragGuide.remove();
     if (handle.hasPointerCapture(upEvent.pointerId)) handle.releasePointerCapture(upEvent.pointerId);
     document.body.classList.remove("resizing");
     window.removeEventListener("pointermove", onMove);
@@ -2093,7 +2472,11 @@ function focusAnchor(anchorId: string) {
       v-model:collapsed="libraryCollapsed"
       :style="libraryStyle"
       :documents="documents"
+      :groups="groups"
+      :group-rename-request="groupRenameRequest"
       :selected-document-id="selectedDocumentId"
+      :selected-document-ids="selectedLibraryDocumentIds"
+      :recent-group-id="recentGroupId"
       :pdf-document="pdfDocument"
       :page-numbers="pageNumbers"
       :current-page-number="currentPageNumber"
@@ -2108,7 +2491,13 @@ function focusAnchor(anchorId: string) {
       @create-empty-readerm="createEmptyReaderm"
       @create-readerm-from-markdown="createReadermFromMarkdown"
       @open-document="openDocument"
+      @toggle-document-pinned="toggleDocumentPinned"
+      @document-select="selectLibraryDocument"
       @document-context-menu="handleDocumentContextMenu"
+      @group-context-menu="handleGroupContextMenu"
+      @rename-group="handleRenameGroupInline"
+      @library-context-menu="handleLibraryContextMenu"
+      @move-documents-to-group="handleMoveDocumentsToGroup"
       @delete-document="deleteDocument"
       @clear-history="clearHistory"
       @open-search-result="openLibrarySearchResult"
@@ -2149,11 +2538,11 @@ function focusAnchor(anchorId: string) {
         <div class="start-actions">
           <div class="start-action-row">
             <button type="button" class="primary" @click="importPdf"><FilePlus2 :size="18" /> {{ t("app.importPdf") }}</button>
-            <button type="button" class="primary" @click="createEmptyReaderm"><FileText :size="18" /> {{ t("app.createEmptyReaderm") }}</button>
+            <button type="button" class="primary" @click="createEmptyReaderm"><FilePlus :size="18" /> {{ t("app.createEmptyReaderm") }}</button>
           </div>
           <div class="start-action-row">
-            <button type="button" class="secondary" @click="arxivImportOpen = true">{{ t("app.importArxiv") }}</button>
-            <button type="button" class="secondary" @click="createReadermFromMarkdown">{{ t("app.createReadermFromMarkdown") }}</button>
+            <button type="button" class="secondary" @click="arxivImportOpen = true"><BookOpen :size="18" /> {{ t("app.importArxiv") }}</button>
+            <button type="button" class="secondary" @click="createReadermFromMarkdown"><FileText :size="18" /> {{ t("app.createReadermFromMarkdown") }}</button>
           </div>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
@@ -2552,7 +2941,45 @@ function focusAnchor(anchorId: string) {
         @close="translationModal = null"
         @copy="copyTranslationResult"
       />
+
+      <div v-if="groupNameDialog" class="modal-backdrop" @click.self="cancelGroupNameDialog">
+        <section class="modal group-name-modal">
+          <h2>{{ groupNameDialog.title }}</h2>
+          <label>
+            <span>{{ t("library.groupNamePrompt") }}</span>
+            <input
+              :value="groupNameDialog.value"
+              autofocus
+              @input="groupNameDialog.value = ($event.target as HTMLInputElement).value"
+              @keydown.enter.prevent="confirmGroupNameDialog"
+              @keydown.escape.prevent="cancelGroupNameDialog"
+            />
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="secondary" @click="cancelGroupNameDialog">{{ t("common.cancel") }}</button>
+            <button type="button" class="primary" @click="confirmGroupNameDialog">{{ groupNameDialog.confirmLabel }}</button>
+          </div>
+        </section>
+      </div>
     </section>
+
+    <div
+      v-if="groupContextMenu"
+      class="group-context-menu"
+      :style="groupContextMenuStyle"
+      @contextmenu.prevent
+      @pointerdown.stop
+    >
+      <button
+        v-for="item in groupContextMenuItems"
+        :key="item.action"
+        type="button"
+        :class="{ danger: item.danger }"
+        @click="handleGroupContextMenuAction(item.action)"
+      >
+        {{ item.label }}
+      </button>
+    </div>
 
     <div v-if="notice" class="toast">{{ notice }}</div>
   </main>

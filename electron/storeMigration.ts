@@ -140,6 +140,8 @@ export type StoredDataV2 = {
   dictionary?: Array<Record<string, unknown>>;
   paragraph_translations?: Record<string, StoredParagraphTranslation[]>;
   view_states?: Record<string, StoredDocumentViewState>;
+  groups?: Array<Record<string, unknown>>;
+  recent_group_id?: string;
   settings: Record<string, unknown>;
 };
 
@@ -521,6 +523,27 @@ function cleanDocumentViewStates(value: unknown, documentIds: Set<string>) {
   return result;
 }
 
+function cleanGroups(value: unknown) {
+  const result: Array<Record<string, unknown>> = [];
+  const names = new Set<string>();
+  if (!Array.isArray(value)) return result;
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const groupId = cleanString(item.group_id);
+    const name = cleanString(item.name).trim();
+    if (!groupId || groupId === "default" || !name || names.has(name.toLowerCase())) continue;
+    const createdAt = cleanString(item.created_at, new Date(0).toISOString());
+    result.push({
+      group_id: groupId,
+      name,
+      created_at: createdAt,
+      updated_at: cleanString(item.updated_at, createdAt),
+    });
+    names.add(name.toLowerCase());
+  }
+  return result;
+}
+
 export function migrateStoreToV3(input: unknown): StoredDataV2 {
   const source = isRecord(input) ? input : {};
   const documents = Array.isArray(source.documents) ? source.documents.filter(isRecord) : [];
@@ -547,6 +570,8 @@ export function migrateStoreToV3(input: unknown): StoredDataV2 {
     dictionary: Array.isArray(source.dictionary) ? source.dictionary.filter(isRecord) : [],
     paragraph_translations: cleanParagraphTranslations(source.paragraph_translations),
     view_states: cleanDocumentViewStates(source.view_states, documentIds),
+    groups: cleanGroups(source.groups),
+    recent_group_id: cleanString(source.recent_group_id) || "default",
     settings: cleanSettings(source.settings),
   };
 }

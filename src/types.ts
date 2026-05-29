@@ -19,6 +19,17 @@ export type LibraryDocument = {
   latex_file_name?: string;
   created_at: string;
   updated_at: string;
+  last_opened_at?: string;
+  pinned_at?: string;
+  group_id?: string;
+};
+
+export type LibraryGroup = {
+  group_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  readonly?: boolean;
 };
 
 export type TextQuote = {

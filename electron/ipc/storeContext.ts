@@ -23,6 +23,16 @@ export type DbDocument = {
   latex_file_name?: string;
   created_at: string;
   updated_at: string;
+  last_opened_at?: string;
+  pinned_at?: string;
+  group_id?: string;
+};
+
+export type LibraryGroup = {
+  group_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type StoredAsset = {
@@ -77,6 +87,8 @@ export type StoredData = {
   dictionary: DictionaryEntry[];
   paragraph_translations: Record<string, StoredParagraphTranslation[]>;
   view_states: Record<string, StoredDocumentViewState>;
+  groups: LibraryGroup[];
+  recent_group_id?: string;
   settings: Partial<Settings>;
 };
 
@@ -211,6 +223,8 @@ function emptyStore(): StoredData {
     dictionary: [],
     paragraph_translations: {},
     view_states: {},
+    groups: [],
+    recent_group_id: "default",
     settings: {},
   };
 }
@@ -281,6 +295,8 @@ export function initStorage() {
   store.dictionary ||= [];
   store.paragraph_translations ||= {};
   store.view_states ||= {};
+  store.groups ||= [];
+  store.recent_group_id ||= "default";
   saveStore();
 }
 

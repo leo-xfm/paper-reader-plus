@@ -14,9 +14,19 @@ type SymbolRefreshSource = "latex" | "pdf" | "ai-pdf" | "ai-latex";
 type SymbolRefreshMode = "preserve-user-state" | "reset";
 type SymbolAiApplyMode = "complete" | "replace";
 type DocumentContextMenuResult = {
-  action: "open-file" | "show-in-folder" | "properties" | "cleanup" | "delete";
+  action:
+    | "open-file"
+    | "show-in-folder"
+    | "properties"
+    | "cleanup"
+    | "delete"
+    | "move-to-group"
+    | "create-group-and-move";
   documentId: string;
+  documentIds?: string[];
   mode?: DeleteMode;
+  groupId?: string | null;
+  groupName?: string;
   cleanup?: ReturnType<typeof cleanupUnusedDocumentResources>;
 } | null;
 
@@ -166,6 +176,23 @@ async function confirmSymbolRefreshSource(ctx: IpcContext): Promise<SymbolRefres
   if (result.response === 2) return "ai-pdf";
   if (result.response === 3) return "ai-latex";
   return null;
+}
+
+function selectedDocumentIds(primaryDocumentId: string, rawDocumentIds: unknown) {
+  const ids = Array.isArray(rawDocumentIds) ? rawDocumentIds.map(String).filter(Boolean) : [];
+  return [...new Set(ids.length ? ids : [primaryDocumentId])];
+}
+
+function moveDocumentsToGroup(ctx: IpcContext, documentIds: string[], groupId: string | null) {
+  const targetGroupId = groupId && groupId !== "default" ? groupId : undefined;
+  if (targetGroupId && !ctx.store.groups.some((group) => group.group_id === targetGroupId)) {
+    throw new Error("Group not found.");
+  }
+  for (const documentId of documentIds) {
+    ctx.getDocument(documentId).group_id = targetGroupId;
+  }
+  ctx.store.recent_group_id = targetGroupId || "default";
+  ctx.saveStore();
 }
 
 function cleanFormulaStatus(value: unknown): StoredFormulaAnalysis["status"] {
@@ -336,6 +363,21 @@ export function registerDocumentIpc(ctx: IpcContext) {
     };
   });
 
+  ipcMain.handle("documents:mark-opened", (_event, documentId: string) => {
+    const document = ctx.getDocument(documentId);
+    document.last_opened_at = ctx.now();
+    ctx.store.recent_group_id = document.group_id || "default";
+    ctx.saveStore();
+    return document;
+  });
+
+  ipcMain.handle("documents:set-pinned", (_event, documentId: string, pinned: boolean) => {
+    const document = ctx.getDocument(documentId);
+    document.pinned_at = pinned ? ctx.now() : undefined;
+    ctx.saveStore();
+    return document;
+  });
+
   ipcMain.handle("documents:update-view-state", (_event, documentId: string, viewState: unknown) => {
     ctx.getDocument(documentId);
     const cleaned = ctx.cleanDocumentViewState(viewState);
@@ -437,8 +479,10 @@ export function registerDocumentIpc(ctx: IpcContext) {
     await showDocumentProperties(ctx, documentId);
   });
 
-  ipcMain.handle("documents:show-context-menu", (_event, documentId: string) => {
+  ipcMain.handle("documents:show-context-menu", (_event, documentId: string, rawDocumentIds?: string[]) => {
     const document = ctx.getDocument(documentId);
+    const documentIds = selectedDocumentIds(documentId, rawDocumentIds);
+    const multiLabel = documentIds.length > 1 ? ` (${documentIds.length})` : "";
     return new Promise<DocumentContextMenuResult>((resolve) => {
       let settled = false;
       const finish = (result: DocumentContextMenuResult) => {
@@ -449,6 +493,7 @@ export function registerDocumentIpc(ctx: IpcContext) {
       const menu = Menu.buildFromTemplate([
         {
           label: "\u6253\u5f00\u6587\u4ef6",
+          enabled: documentIds.length === 1,
           click: () => {
             void openDocumentFile(ctx, documentId)
               .then(() => finish({ action: "open-file", documentId }))
@@ -460,6 +505,7 @@ export function registerDocumentIpc(ctx: IpcContext) {
         },
         {
           label: "\u6253\u5f00\u6240\u5728\u7684\u6587\u4ef6\u5939",
+          enabled: documentIds.length === 1,
           click: () => {
             try {
               showDocumentInFolder(ctx, documentId);
@@ -472,6 +518,7 @@ export function registerDocumentIpc(ctx: IpcContext) {
         },
         {
           label: "\u5c5e\u6027",
+          enabled: documentIds.length === 1,
           click: () => {
             void showDocumentProperties(ctx, documentId)
               .then(() => finish({ action: "properties", documentId }))
@@ -483,6 +530,7 @@ export function registerDocumentIpc(ctx: IpcContext) {
         },
         {
           label: "\u6574\u7406\u672a\u4f7f\u7528\u8d44\u6e90",
+          enabled: documentIds.length === 1,
           click: () => {
             void confirmCleanupDocument(ctx, document.title, document.file_name)
               .then((confirmed) => {
@@ -502,7 +550,41 @@ export function registerDocumentIpc(ctx: IpcContext) {
         },
         { type: "separator" },
         {
-          label: "\u5220\u9664",
+          label: `\u79fb\u52a8\u5230\u5206\u7ec4${multiLabel}`,
+          submenu: [
+            {
+              label: "\u9ed8\u8ba4\u7ec4",
+              click: () => {
+                try {
+                  moveDocumentsToGroup(ctx, documentIds, null);
+                  finish({ action: "move-to-group", documentId, documentIds, groupId: null });
+                } catch (cause) {
+                  dialog.showErrorBox("\u79fb\u52a8\u5931\u8d25", cause instanceof Error ? cause.message : String(cause));
+                  finish(null);
+                }
+              },
+            },
+            ...ctx.store.groups.map((group) => ({
+              label: group.name,
+              click: () => {
+                try {
+                  moveDocumentsToGroup(ctx, documentIds, group.group_id);
+                  finish({ action: "move-to-group", documentId, documentIds, groupId: group.group_id });
+                } catch (cause) {
+                  dialog.showErrorBox("\u79fb\u52a8\u5931\u8d25", cause instanceof Error ? cause.message : String(cause));
+                  finish(null);
+                }
+              },
+            })),
+          ],
+        },
+        {
+          label: `\u65b0\u5efa\u5206\u7ec4\u5e76\u79fb\u52a8${multiLabel}`,
+          click: () => finish({ action: "create-group-and-move", documentId, documentIds }),
+        },
+        { type: "separator" },
+        {
+          label: `\u5220\u9664${multiLabel}`,
           click: () => {
             void confirmDeleteDocument(ctx, document.title, document.file_name)
               .then(async (mode) => {
@@ -510,8 +592,8 @@ export function registerDocumentIpc(ctx: IpcContext) {
                   finish(null);
                   return;
                 }
-                await deleteDocumentById(ctx, documentId, mode);
-                finish({ action: "delete", documentId, mode });
+                for (const id of documentIds) await deleteDocumentById(ctx, id, mode);
+                finish({ action: "delete", documentId, documentIds, mode });
               })
               .catch((cause) => {
                 dialog.showErrorBox("\u5220\u9664\u5931\u8d25", cause instanceof Error ? cause.message : String(cause));

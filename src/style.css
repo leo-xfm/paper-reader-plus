@@ -77,6 +77,17 @@ body {
   background: var(--color-canvas);
 }
 
+.resize-drag-guide {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-1px);
+  background: #eff7fa;
+  pointer-events: none;
+  z-index: 1000;
+}
+
 body:has(.help-page) {
   overflow: auto;
   min-width: 0;

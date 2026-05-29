@@ -35,7 +35,7 @@ function createWindow() {
     backgroundColor: "#f6f7f9",
     autoHideMenuBar: false,
     webPreferences: {
-      preload: join(app.getAppPath(), "dist-electron/preload.js"),
+      preload: join(app.getAppPath(), "dist-electron/electron/preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

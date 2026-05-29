@@ -20,6 +20,7 @@ import type {
   FileAssociationExtension,
   FileAssociationStatus,
   ReaderPackageAiHistory,
+  LibraryGroup,
   TranslateSelectionRequest,
   TranslateSelectionResponse,
   PromptTemplateStatus,
@@ -94,9 +95,16 @@ declare global {
       upgradeMarkdownToReadermCopy(documentId: string, markdown: string): Promise<LibraryDocument | null>;
       importDroppedFile(filePath: string): Promise<LibraryDocument | null>;
       listDocuments(): Promise<LibraryDocument[]>;
-      clearDocumentHistory(mode: "readerp" | "readerm"): Promise<{ removed: number }>;
+      listGroups(): Promise<LibraryGroup[]>;
+      createGroup(name: string): Promise<LibraryGroup>;
+      renameGroup(groupId: string, name: string): Promise<LibraryGroup>;
+      deleteGroup(groupId: string, mode: "group-only" | "history-records"): Promise<{ removed: number }>;
+      moveDocumentsToGroup(documentIds: string[], groupId: string | null): Promise<LibraryDocument[]>;
+      clearDocumentHistory(mode: "readerp" | "readerm" | "all"): Promise<{ removed: number }>;
       searchLibrary(query: string): Promise<LibrarySearchResult[]>;
       getDocumentContext(documentId: string): Promise<DocumentContext>;
+      markDocumentOpened(documentId: string): Promise<LibraryDocument>;
+      setDocumentPinned(documentId: string, pinned: boolean): Promise<LibraryDocument>;
       updateDocumentViewState(documentId: string, viewState: DocumentViewState): Promise<DocumentViewState>;
       getDocumentHealth(documentId: string): Promise<PackageHealthReport>;
       getPdfData(documentId: string): Promise<ArrayBuffer>;
@@ -108,10 +116,20 @@ declare global {
       confirmSymbolRefreshSource(): Promise<"latex" | "pdf" | "ai-pdf" | "ai-latex" | null>;
       confirmSymbolAiApplyMode(): Promise<"complete" | "replace" | null>;
       confirmSymbolRefreshMode(): Promise<"preserve-user-state" | "reset" | null>;
-      showDocumentContextMenu(documentId: string): Promise<{
-        action: "open-file" | "show-in-folder" | "properties" | "cleanup" | "delete";
+      showDocumentContextMenu(documentId: string, documentIds?: string[]): Promise<{
+        action:
+          | "open-file"
+          | "show-in-folder"
+          | "properties"
+          | "cleanup"
+          | "delete"
+          | "move-to-group"
+          | "create-group-and-move";
         documentId: string;
+        documentIds?: string[];
         mode?: "record" | "file";
+        groupId?: string | null;
+        groupName?: string;
         cleanup?: CleanupUnusedResult;
       } | null>;
       openDocumentFile(documentId: string): Promise<void>;

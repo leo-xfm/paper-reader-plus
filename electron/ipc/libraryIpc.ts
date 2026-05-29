@@ -10,14 +10,15 @@ import { createReadermPackageBuffer, readReadermPackageBuffer } from "../service
 import { searchLibrary } from "../services/LibrarySearchService.js";
 import { normalizeMarkdownUnorderedListIndent } from "../../shared/MarkdownListNormalizationService.js";
 import type { StoredAnchor, StoredAnnotation } from "../storeMigration.js";
-import type { DbDocument, IpcContext } from "./storeContext.js";
+import type { DbDocument, IpcContext, LibraryGroup } from "./storeContext.js";
 
 type ArxivImportOptions = {
   includeSource?: boolean;
   requestId?: string;
 };
 
-type HistoryMode = "readerp" | "readerm";
+type HistoryMode = "readerp" | "readerm" | "all";
+const DEFAULT_GROUP_ID = "default";
 
 function normalizeHistoryPath(filePath: string) {
   return resolve(filePath).toLowerCase();
@@ -52,6 +53,45 @@ function removeDocumentRecord(ctx: IpcContext, documentId: string) {
   ctx.store.annotations = ctx.store.annotations.filter((item) => item.document_id !== documentId);
 }
 
+function defaultGroup(): LibraryGroup & { readonly: true } {
+  const timestamp = new Date(0).toISOString();
+  return {
+    group_id: DEFAULT_GROUP_ID,
+    name: "Default",
+    created_at: timestamp,
+    updated_at: timestamp,
+    readonly: true,
+  };
+}
+
+function listGroups(ctx: IpcContext) {
+  return [defaultGroup(), ...(ctx.store.groups || [])];
+}
+
+function normalizeGroupId(groupId: string | null | undefined) {
+  return groupId && groupId !== DEFAULT_GROUP_ID ? groupId : undefined;
+}
+
+function ensureGroupExists(ctx: IpcContext, groupId: string | null | undefined) {
+  const normalized = normalizeGroupId(groupId);
+  if (!normalized) return undefined;
+  if (!ctx.store.groups.some((group) => group.group_id === normalized)) {
+    throw new Error("Group not found.");
+  }
+  return normalized;
+}
+
+function cleanGroupName(name: string) {
+  return String(name || "").trim().replace(/\s+/g, " ");
+}
+
+function ensureUniqueGroupName(ctx: IpcContext, name: string, exceptGroupId = "") {
+  const normalized = name.toLowerCase();
+  if (ctx.store.groups.some((group) => group.group_id !== exceptGroupId && group.name.toLowerCase() === normalized)) {
+    throw new Error("A group with this name already exists.");
+  }
+}
+
 function compactPackageHistory(ctx: IpcContext) {
   const byKey = new Map<string, DbDocument>();
   const duplicates: string[] = [];
@@ -77,6 +117,7 @@ function compactPackageHistory(ctx: IpcContext) {
 }
 
 function isHistoryModeDocument(document: DbDocument, mode: HistoryMode) {
+  if (mode === "all") return true;
   return mode === "readerm" ? document.source_type === "readerm" : document.source_type !== "readerm";
 }
 
@@ -560,15 +601,101 @@ export function registerLibraryIpc(ctx: IpcContext) {
         : document.readerp_path && extname(document.readerp_path).toLowerCase() === ".readerp"
           ? { ...document, file_name: basename(document.readerp_path) }
         : document)
-      .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+      .sort((left, right) => {
+        const leftPinned = Boolean(left.pinned_at);
+        const rightPinned = Boolean(right.pinned_at);
+        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+        if (leftPinned && rightPinned) {
+          const pinned = (right.pinned_at || "").localeCompare(left.pinned_at || "");
+          if (pinned) return pinned;
+        }
+        const leftOpened = left.last_opened_at || left.updated_at || left.created_at;
+        const rightOpened = right.last_opened_at || right.updated_at || right.created_at;
+        return rightOpened.localeCompare(leftOpened);
+      });
   });
 
   ipcMain.handle("library:search", (_event, query: string) => {
     return searchLibrary(ctx.store, query);
   });
 
+  ipcMain.handle("library:list-groups", () => {
+    return listGroups(ctx);
+  });
+
+  ipcMain.handle("library:create-group", (_event, rawName: string) => {
+    const name = cleanGroupName(rawName);
+    if (!name) throw new Error("Group name is required.");
+    ensureUniqueGroupName(ctx, name);
+    const timestamp = ctx.now();
+    const group: LibraryGroup = {
+      group_id: randomUUID(),
+      name,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    ctx.store.groups.push(group);
+    ctx.saveStore();
+    return group;
+  });
+
+  ipcMain.handle("library:rename-group", (_event, groupId: string, rawName: string) => {
+    if (groupId === DEFAULT_GROUP_ID) throw new Error("Default group cannot be renamed.");
+    const group = ctx.store.groups.find((item) => item.group_id === groupId);
+    if (!group) throw new Error("Group not found.");
+    const name = cleanGroupName(rawName);
+    if (!name) throw new Error("Group name is required.");
+    ensureUniqueGroupName(ctx, name, groupId);
+    group.name = name;
+    group.updated_at = ctx.now();
+    ctx.saveStore();
+    return group;
+  });
+
+  ipcMain.handle("library:move-documents-to-group", (_event, documentIds: string[], groupId: string | null) => {
+    const ids = Array.isArray(documentIds) ? [...new Set(documentIds.map(String).filter(Boolean))] : [];
+    const targetGroupId = ensureGroupExists(ctx, groupId);
+    const moved: DbDocument[] = [];
+    for (const documentId of ids) {
+      const document = ctx.getDocument(documentId);
+      document.group_id = targetGroupId;
+      moved.push(document);
+    }
+    ctx.store.recent_group_id = targetGroupId || DEFAULT_GROUP_ID;
+    ctx.saveStore();
+    return moved;
+  });
+
+  ipcMain.handle("library:delete-group", (_event, groupId: string, mode: "group-only" | "history-records") => {
+    if (groupId === DEFAULT_GROUP_ID) {
+      if (mode === "group-only") throw new Error("Default group cannot be deleted.");
+      const documentIds = ctx.store.documents
+        .filter((document) => !document.group_id)
+        .map((document) => document.document_id);
+      for (const documentId of documentIds) removeDocumentRecord(ctx, documentId);
+      ctx.saveStore();
+      return { removed: documentIds.length };
+    }
+    const group = ctx.store.groups.find((item) => item.group_id === groupId);
+    if (!group) throw new Error("Group not found.");
+    const documentIds = ctx.store.documents
+      .filter((document) => document.group_id === groupId)
+      .map((document) => document.document_id);
+    if (mode === "history-records") {
+      for (const documentId of documentIds) removeDocumentRecord(ctx, documentId);
+    } else {
+      for (const document of ctx.store.documents) {
+        if (document.group_id === groupId) document.group_id = undefined;
+      }
+    }
+    ctx.store.groups = ctx.store.groups.filter((item) => item.group_id !== groupId);
+    if (ctx.store.recent_group_id === groupId) ctx.store.recent_group_id = DEFAULT_GROUP_ID;
+    ctx.saveStore();
+    return { removed: mode === "history-records" ? documentIds.length : 0 };
+  });
+
   ipcMain.handle("library:clear-history", (_event, mode: HistoryMode) => {
-    const cleanMode: HistoryMode = mode === "readerm" ? "readerm" : "readerp";
+    const cleanMode: HistoryMode = mode === "all" ? "all" : mode === "readerm" ? "readerm" : "readerp";
     const documentIds = ctx.store.documents
       .filter((document) => isHistoryModeDocument(document, cleanMode))
       .map((document) => document.document_id);

@@ -61,7 +61,7 @@ export function openHelpWindow(parent: BrowserWindow | null, topic: unknown = "g
     parent: parent || undefined,
     backgroundColor: "#f6f7f9",
     webPreferences: {
-      preload: join(app.getAppPath(), "dist-electron/preload.js"),
+      preload: join(app.getAppPath(), "dist-electron/electron/preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

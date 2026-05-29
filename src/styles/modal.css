@@ -357,6 +357,49 @@
   justify-content: center;
 }
 
+.group-name-modal {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.group-context-menu {
+  position: fixed;
+  z-index: var(--z-floating-preview);
+  width: 204px;
+  max-width: calc(100vw - 16px);
+  padding: 15px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-paper);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
+  overflow: hidden;
+}
+
+.group-context-menu button {
+  width: 100%;
+  min-height: 30px;
+  justify-content: flex-start;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.1;
+  text-align: left;
+}
+
+.group-context-menu button:hover,
+.group-context-menu button:focus-visible {
+  background: var(--color-surface);
+}
+
+.group-context-menu button.danger {
+  margin-top: 5px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-danger);
+}
+
 @media (max-width: 680px) {
   .settings-grid,
   .settings-two-column-row {

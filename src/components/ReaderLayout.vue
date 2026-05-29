@@ -25,6 +25,7 @@ const preferredPdfWidth = 520;
 const minPanelWidth = 280;
 const maxPanelWidth = 860;
 const layoutGutter = 12;
+const resizeDragUpdateIntervalMs = 50;
 const gridWidth = ref(0);
 let resizeObserver: ResizeObserver | null = null;
 let initializedPanelWidth = false;
@@ -87,6 +88,54 @@ onBeforeUnmount(() => {
 
 watch(() => [props.collapsed, props.rightPanelWidth, gridWidth.value] as const, syncRightPanelWidth);
 
+function createResizeDragThrottle(apply: (width: number) => void) {
+  let latestWidth: number | null = null;
+  let lastAppliedAt = 0;
+  let timer: number | null = null;
+
+  const flush = () => {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+    if (latestWidth === null) return;
+    lastAppliedAt = performance.now();
+    apply(latestWidth);
+  };
+
+  return {
+    update(width: number) {
+      latestWidth = width;
+      const remaining = resizeDragUpdateIntervalMs - (performance.now() - lastAppliedAt);
+      if (remaining <= 0) {
+        flush();
+        return;
+      }
+      if (timer === null) timer = window.setTimeout(flush, remaining);
+    },
+    flush,
+  };
+}
+
+function createResizeDragGuide(initialClientX: number) {
+  const guide = document.createElement("div");
+  guide.className = "resize-drag-guide";
+  document.body.appendChild(guide);
+
+  const move = (clientX: number) => {
+    guide.style.left = `${Math.round(clientX)}px`;
+  };
+
+  move(initialClientX);
+
+  return {
+    move,
+    remove() {
+      guide.remove();
+    },
+  };
+}
+
 function startResize(event: PointerEvent) {
   event.preventDefault();
   const handle = event.currentTarget as HTMLElement;
@@ -94,12 +143,20 @@ function startResize(event: PointerEvent) {
   document.body.classList.add("resizing");
   const startX = event.clientX;
   const startWidth = props.rightPanelWidth;
+  const throttledResize = createResizeDragThrottle((width) => {
+    emit("update:rightPanelWidth", width);
+  });
+  const dragGuide = createResizeDragGuide(event.clientX);
 
   const onMove = (moveEvent: PointerEvent) => {
     const delta = startX - moveEvent.clientX;
-    emit("update:rightPanelWidth", clampRightPanelWidth(startWidth + delta));
+    const width = clampRightPanelWidth(startWidth + delta);
+    dragGuide.move(startX - (width - startWidth));
+    throttledResize.update(width);
   };
   const onUp = (upEvent: PointerEvent) => {
+    throttledResize.flush();
+    dragGuide.remove();
     if (handle.hasPointerCapture(upEvent.pointerId)) handle.releasePointerCapture(upEvent.pointerId);
     document.body.classList.remove("resizing");
     window.removeEventListener("pointermove", onMove);
